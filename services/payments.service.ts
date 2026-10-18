@@ -1,5 +1,5 @@
 import { PaymentMethod, Prisma } from '@prisma/client';
-import { prisma } from '@/lib/db/prisma';
+import { prisma, type Tx } from '@/lib/db/prisma';
 import { HttpError } from '@/lib/errors';
 import { D, ZERO } from '@/lib/money';
 import { audit } from '@/lib/audit';
@@ -13,63 +13,75 @@ export interface DebtPaymentInput {
   amount: string;
   method: PaymentMethod;
   notes?: string | null;
+  reference?: string | null;
+  /** When set, the payment is applied to this specific sale (e.g. a delivery order) and may not exceed its balance. */
+  saleId?: string | null;
 }
 
-/** Pays down a customer's debt. Never a new sale. Allocates oldest-credit-first and writes a ledger entry. */
+/** Runs inside an existing transaction. Pays down debt (never a new sale), allocates, and writes the ledger entry. */
+export async function recordDebtPaymentTx(tx: Tx, input: DebtPaymentInput, actorId: string) {
+  const dup = await tx.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+  if (dup) return { payment: dup, duplicate: true, balance: await balanceOf(tx, dup.customerId!) };
+
+  // Serialise concurrent payments for the same customer.
+  await tx.$queryRaw`SELECT id FROM "Customer" WHERE id = ${input.customerId} FOR UPDATE`;
+  const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
+  if (!customer) throw new HttpError(404, 'Customer not found.');
+
+  const amount = D(input.amount);
+  const balance = await balanceOf(tx, customer.id);
+  if (balance.lte(0)) throw new HttpError(400, 'This customer has no outstanding balance.');
+  if (amount.gt(balance)) throw new HttpError(400, `Payment is more than the outstanding balance (${balance.toFixed(2)}).`);
+
+  let target: Awaited<ReturnType<typeof tx.sale.findUnique>> = null;
+  if (input.saleId) {
+    target = await tx.sale.findUnique({ where: { id: input.saleId } });
+    if (!target || target.customerId !== customer.id || target.status !== 'COMPLETED') throw new HttpError(400, 'That order cannot receive payments.');
+    const due = target.totalAmount.minus(target.amountPaid);
+    if (amount.gt(due)) throw new HttpError(400, `Payment is more than what is still due on this order (${due.toFixed(2)}).`);
+  }
+
+  const payment = await tx.payment.create({
+    data: {
+      paymentReference: await nextReference(tx, 'PAY'),
+      idempotencyKey: input.idempotencyKey,
+      customerId: customer.id,
+      saleId: null,
+      amount,
+      paymentMethod: input.method,
+      paymentType: 'DEBT_PAYMENT',
+      receivedById: actorId,
+      notes: input.notes ?? null,
+      reference: input.reference ?? null,
+    },
+  });
+  await tx.ledgerEntry.create({
+    data: { customerId: customer.id, type: 'PAYMENT', amount: amount.neg(), paymentId: payment.id, saleId: target?.id ?? null, note: input.notes ?? (target ? `Payment for ${target.transactionNumber}` : 'Debt payment'), recordedById: actorId },
+  });
+
+  let remaining = amount;
+  const sales = target
+    ? [target]
+    : await tx.sale.findMany({ where: { customerId: customer.id, status: 'COMPLETED', paymentStatus: { not: 'PAID' } }, orderBy: { createdAt: 'asc' } });
+  for (const s of sales) {
+    if (remaining.lte(0)) break;
+    const due = s.totalAmount.minus(s.amountPaid);
+    if (due.lte(0)) continue;
+    const apply = Prisma.Decimal.min(due, remaining);
+    const newPaid = s.amountPaid.plus(apply);
+    await tx.sale.update({ where: { id: s.id }, data: { amountPaid: newPaid, paymentStatus: paymentStatusFor(s.totalAmount, newPaid) } });
+    await tx.paymentAllocation.create({ data: { paymentId: payment.id, saleId: s.id, allocatedAmount: apply } });
+    remaining = remaining.minus(apply);
+  }
+
+  await audit(tx, { actorId, action: 'DEBT_PAYMENT', entityType: 'Payment', entityId: payment.id, newValues: { customerId: customer.id, amount, method: input.method, saleId: target?.id ?? null, reference: input.reference } });
+  return { payment, duplicate: false, balance: balance.minus(amount) };
+}
+
+/** Pays down a customer's debt. Never a new sale. */
 export async function recordDebtPayment(input: DebtPaymentInput, actorId: string) {
   try {
-    return await prisma.$transaction(
-      async (tx) => {
-        const dup = await tx.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
-        if (dup) return { payment: dup, duplicate: true, balance: await balanceOf(tx, dup.customerId!) };
-
-        // Serialise concurrent payments for the same customer.
-        await tx.$queryRaw`SELECT id FROM "Customer" WHERE id = ${input.customerId} FOR UPDATE`;
-        const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
-        if (!customer) throw new HttpError(404, 'Customer not found.');
-
-        const amount = D(input.amount);
-        const balance = await balanceOf(tx, customer.id);
-        if (balance.lte(0)) throw new HttpError(400, 'This customer has no outstanding balance.');
-        if (amount.gt(balance)) throw new HttpError(400, `Payment is more than the outstanding balance (${balance.toFixed(2)}).`);
-
-        const payment = await tx.payment.create({
-          data: {
-            paymentReference: await nextReference(tx, 'PAY'),
-            idempotencyKey: input.idempotencyKey,
-            customerId: customer.id,
-            amount,
-            paymentMethod: input.method,
-            paymentType: 'DEBT_PAYMENT',
-            receivedById: actorId,
-            notes: input.notes ?? null,
-          },
-        });
-        await tx.ledgerEntry.create({
-          data: { customerId: customer.id, type: 'PAYMENT', amount: amount.neg(), paymentId: payment.id, note: input.notes ?? 'Debt payment', recordedById: actorId },
-        });
-
-        let remaining = amount;
-        const sales = await tx.sale.findMany({
-          where: { customerId: customer.id, status: 'COMPLETED', paymentStatus: { not: 'PAID' } },
-          orderBy: { createdAt: 'asc' },
-        });
-        for (const s of sales) {
-          if (remaining.lte(0)) break;
-          const due = s.totalAmount.minus(s.amountPaid);
-          if (due.lte(0)) continue;
-          const apply = Prisma.Decimal.min(due, remaining);
-          const newPaid = s.amountPaid.plus(apply);
-          await tx.sale.update({ where: { id: s.id }, data: { amountPaid: newPaid, paymentStatus: paymentStatusFor(s.totalAmount, newPaid) } });
-          await tx.paymentAllocation.create({ data: { paymentId: payment.id, saleId: s.id, allocatedAmount: apply } });
-          remaining = remaining.minus(apply);
-        }
-
-        await audit(tx, { actorId, action: 'DEBT_PAYMENT', entityType: 'Payment', entityId: payment.id, newValues: { customerId: customer.id, amount, method: input.method } });
-        return { payment, duplicate: false, balance: balance.minus(amount) };
-      },
-      { timeout: 20000 },
-    );
+    return await prisma.$transaction((tx) => recordDebtPaymentTx(tx, input, actorId), { timeout: 20000 });
   } catch (e) {
     if (isUniqueViolation(e)) {
       const dup = await prisma.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });

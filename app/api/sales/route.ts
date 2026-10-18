@@ -2,6 +2,7 @@ import { route, parseJson, intParam } from '@/lib/api';
 import { saleCreate } from '@/lib/validation';
 import { getActor, getFullAdmin } from '@/lib/auth';
 import { createSale, listSales } from '@/services/sales.service';
+import { getSettings } from '@/services/settings.service';
 import type { Period } from '@/lib/date';
 
 export const GET = route(async (req) => {
@@ -33,9 +34,12 @@ export const GET = route(async (req) => {
 export const POST = route(async (req) => {
   const actor = await getActor();
   const b = await parseJson(req, saleCreate);
+  // Permission rule for custom prices: Admin always, Staff only while the setting allows it.
+  const allowCustom = actor.role === 'ADMIN' || (await getSettings()).allowStaffCustomPrice;
   const { sale, duplicate } = await createSale(
     { idempotencyKey: b.idempotencyKey, customerId: b.customerId ?? null, items: b.items, payments: b.payments, notes: b.notes },
     actor.id,
+    { allowCustom },
   );
   return { sale, duplicate };
 });

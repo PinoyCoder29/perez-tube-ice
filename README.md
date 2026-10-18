@@ -7,7 +7,7 @@ Ice sales and delivery management for a small Philippine business. Two entry poi
 
 Stack: Next.js 14 (App Router) · TypeScript (strict) · Bootstrap 5 · Recharts · Lucide · Prisma · PostgreSQL (Neon) · Zod · bcryptjs.
 
-> **Status:** this code was generated without being able to run `npm install`, `next build` or a database in the build environment. The date/period and financial-definition logic was checked in isolation (see `tests/logic.test.ts`), but the project as a whole has **not been compiled or run**. Treat the first `npm run typecheck` / `npm run build` as part of setup and expect to fix a few small type or typo errors. Prisma migration files are also not included yet — see step 4.
+> **Status:** this code was generated without being able to run `npm install`, `next build`, a database or a browser in the build environment. Only the date/period and financial-definition logic was executed in isolation. The project as a whole — including every test file listed below — has **not been compiled or run**. Treat the first `npm run typecheck` / `npm run build` as part of setup and expect to fix a few small type or typo errors. Prisma migration files are also not included yet — see step 4.
 
 ## 1. Requirements
 Node.js 18.18+ (20 recommended), a Neon (or any PostgreSQL) database.
@@ -26,7 +26,7 @@ cp .env.example .env
 | `APP_URL` | e.g. `http://localhost:3000` |
 | `SESSION_SECRET` | 32+ chars. `openssl rand -base64 48` |
 | `ADMIN_USERNAME` / `ADMIN_INITIAL_PASSWORD` | Only read by the seed, first run only. 10+ chars. Admin must change it on first login |
-| `BUSINESS_TIMEZONE` | Optional, default `Asia/Manila` |
+| `BUSINESS_TIMEZONE` / `NEXT_PUBLIC_BUSINESS_TIMEZONE` | Optional, default `Asia/Manila`. If you change it, set **both** to the same value (server day boundaries and the browser's Today/Yesterday shortcuts) |
 
 Never commit `.env`.
 
@@ -43,7 +43,9 @@ The seed is safe to re-run: it creates the Admin (only if missing), the shared S
 ```bash
 npm run dev          # http://localhost:3000
 npm run typecheck
-npm test             # unit tests for date ranges + financial definitions
+npm test             # unit tests (date ranges, financial definitions, validation, xlsx)
+RUN_DB_TESTS=1 npm test   # + database integration tests (use a throwaway DB — they write rows)
+npm run test:e2e     # Playwright browser tests (needs a seeded DB; see e2e/section25.spec.ts)
 ```
 
 ## 6. Deploy to Vercel
@@ -95,3 +97,31 @@ components/     UI (layout, pos, customers, deliveries, ui)
 prisma/         schema.prisma, seed.ts
 tests/          unit tests
 ```
+
+
+## Section 25 update — what changed and how it works
+
+**Delivery orders, payments and cancellation**
+* Staff *and* Admin use one delivery board: search (name, number, address, order no. `DL-…`), a date picker, tabs (All, Pending, Out for Delivery, Delivered, Unpaid, Partially Paid, Paid, GCash, Cancelled) with counts, and totals for the selected tab/date (orders, delivered, unpaid, partially-paid balance, paid, GCash collected).
+* **Delivery status and payment status are independent.** Payment status is *derived from recorded payments* (never stored separately, so it cannot drift): Unpaid / Partially paid / Paid. The quick actions — Paid — Cash, Paid — GCash, Partially paid, Unpaid / collect later — either create real payment records (amount, method, timestamp, optional GCash reference/note) or record nothing. "Unpaid" never changes a balance.
+* **When does an order become a sale?** On the first money recorded against it *or* when it is delivered, whichever comes first (one sale per order, enforced by an atomic claim). Whatever is unpaid at that moment is charged to the customer's account as credit; later payments are applied to that order's sale as debt payments (never new sales). An undelivered, unpaid order is not a sale and is not collectible debt.
+* **Mark as delivered** asks for confirmation, stores the delivered timestamp and the acting identity, and does *not* mark anything paid unless Cash/GCash was entered in the same dialog.
+* **Cancel order** (customer cancelled) needs a reason; stores status, reason, timestamp, who. If the order already has a sale/payments they are reversed through the controlled void process (payments voided, credit charge reversed, stock restored, audit entries linked) — the amount refunded to the customer is handled outside the app. Delivered orders cannot be cancelled with this button; Admin uses **Reverse (Admin)**.
+* Payment status values are `UNPAID`, `PARTIAL`, `PAID` (the spec suggested `PARTIALLY_PAID`; labels in the UI read "Partially paid").
+
+**Payment overview** (Admin → Payments & Collections, Staff → Utang / Pay): unpaid, partially paid and paid orders/credit sales with customer, phone, reference, original amount, paid, balance, methods, last payment date; totals for unpaid, part-paid balance, paid, GCash collected, cash collected and total outstanding debt. *GCash collected* (confirmed payment records in the period) is shown separately from the *value of orders paid by GCash*.
+
+**POS:** Tube Ice is listed first (seed gives it `sortOrder` 1; the order comes from the database). **Custom price**: pick product, price, quantity → added to the cart without touching the price buttons. The server rejects zero/negative/malformed values and anything above *Settings → highest custom price* (default ₱5,000); Admin can switch Staff custom pricing off. Sale items store `isCustomPrice`, unit price and product/package snapshots; custom lines never consume stock or count as sacks.
+
+**Daily Sales Calendar** (Admin → Daily Sales Calendar; Staff → More → Daily Summary): Today / Yesterday / Previous day / Next day / date picker. Admin sees totals (sales, cash, GCash & digital, credit, debt payments, expenses, net cash flow, Tube/Crushed Ice quantity + amount, delivery counts), an hourly chart and the day's sales, payments, deliveries and expenses. Staff see the same day's records but can look back only 60 days (`STAFF_HISTORY_DAYS`). Day boundaries are computed on the server in the business timezone. The dashboard period picker also has Yesterday and a single-day picker.
+
+**Excel / CSV export:** `GET /api/reports/<type>?format=xlsx|csv` (Admin only, server-generated with `exceljs`). Exports use the selected period/filters and return *all* matching rows (there is no "export current page" option). Sheets have a title, period, generated timestamp, numeric ₱ cells, text-formatted phone numbers/references and a formula-injection guard. Types include daily/period transactions, customer directory, customer transaction history, outstanding/unpaid accounts, debt ledger, debt payments, cash & GCash payments, deliveries, expenses, product/staff/sack summaries and inventory stock/movements.
+
+**Mobile UI:** Admin bottom bar = Dashboard, Sales, Deliveries, Customers (Customers/Debts tabs), More (drawer with everything else). Staff bottom bar = POS, Deliveries, Customers, Utang / Pay, More (Transactions, Expenses, Daily Summary). Wide tables become labelled cards below 768 px (`CardTable` copies header text into each cell, so the balance and status come first); delivery, payment-overview and customer lists are cards by design. The POS Confirm button is sticky on phones.
+
+**Staff identity:** payments and deliveries are still recorded under the single shared "Staff" user (there is deliberately no per-person staff login), so "Staff identity/session label" in records means that shared identity.
+
+### Tests for Section 25 (written, **not yet executed**)
+* `tests/section25.unit.test.ts` — Tube-first order, custom-price validation shape, daily boundaries, xlsx contents and formula guard.
+* `tests/section25.integration.test.ts` — needs a database (`RUN_DB_TESTS=1`): delivered-but-unpaid, Cash/GCash paid, partial payments (exact balances), GCash counts confirmed records only, duplicate submission, cancellation with/without a sale (reversal + audit), delivered orders can't be cancelled normally, no double sale, server-side custom-price rejection, daily totals reconcile, Staff history limit.
+* `e2e/section25.spec.ts` — Playwright (desktop + phone): Tube-first POS, custom price UI, delivery filters, no sideways scrolling, bottom navigation + More menus for Staff and Admin, yesterday selection, xlsx download, Staff blocked from Admin data/exports. Admin tests need `E2E_ADMIN_PASSWORD`.

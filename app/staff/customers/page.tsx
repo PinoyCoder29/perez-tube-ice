@@ -6,7 +6,8 @@ import { formatPeso } from '@/lib/formatting';
 import { telHref } from '@/lib/phone';
 import { CustomerForm } from '@/components/customers/CustomerForm';
 import { CustomerDetail } from '@/components/customers/CustomerDetail';
-import { EmptyState, ErrorNote, TableSkeleton } from '@/components/ui/common';
+import { EmptyState, ErrorNote, StatusBadge, TableSkeleton } from '@/components/ui/common';
+import { PAYMENT_STATUS_LABELS } from '@/lib/constants';
 
 export default function StaffCustomers() {
   const [q, setQ] = useState('');
@@ -28,7 +29,7 @@ export default function StaffCustomers() {
                 <button className="btn btn-link text-start text-decoration-none p-0 flex-grow-1 text-body" onClick={() => setOpen(c.id)}>
                   <div className="fw-semibold">{c.name}</div>
                   <div className="small text-muted-2">{c.address}</div>
-                  {Number(c.outstandingBalance) > 0 && <span className="pill bad money">Owes {formatPeso(c.outstandingBalance)}</span>}
+                  {c.accountStatus && <span className="d-flex gap-2 align-items-center mt-1 flex-wrap"><StatusBadge status={c.accountStatus} label={PAYMENT_STATUS_LABELS[c.accountStatus]} />{Number(c.outstandingBalance) > 0 && <strong className="money text-danger">Owes {formatPeso(c.outstandingBalance)}</strong>}</span>}
                 </button>
                 <a className="btn btn-outline-primary" href={telHref(c.phone)} aria-label={`Call ${c.name}`}><Phone size={16} aria-hidden /> {c.phone}</a>
               </li>

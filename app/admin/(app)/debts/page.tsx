@@ -5,7 +5,7 @@ import { formatDate, formatDateTime, formatPeso } from '@/lib/formatting';
 import { telHref } from '@/lib/phone';
 import { Modal } from '@/components/ui/Modal';
 import { DebtPaymentModal } from '@/components/customers/DebtPaymentModal';
-import { EmptyState, ErrorNote, Field, PageHeader, PeriodPicker, StatusBadge, TableSkeleton, periodReady, usePeriod } from '@/components/ui/common';
+import { CardTable, CustomersDebtsTabs, EmptyState, ErrorNote, ExportButtons, Field, PageHeader, PeriodPicker, StatusBadge, TableSkeleton, periodReady, usePeriod } from '@/components/ui/common';
 import { useToast } from '@/components/ui/providers';
 
 function Ledger({ customerId, onClose, onChanged }: { customerId: string; onClose: () => void; onChanged: () => void }) {
@@ -74,7 +74,8 @@ export default function AdminDebts() {
   ];
   return (
     <div>
-      <PageHeader title="Utang / Debt Management" />
+      <PageHeader title="Utang / Debt Management" actions={<><ExportButtons type="outstanding" params={{ period: 'month' }} label="Balances" /><ExportButtons type="debt-ledger" params={{ period: p.period, from: p.from, to: p.to }} label="Ledger" /></>} />
+      <CustomersDebtsTabs active="debts" />
       <div className="row g-3 mb-4">{cards.map(([l, v]) => <div className="col-6 col-lg-3" key={l}><div className="card kpi"><div className="kpi-label">{l}</div><div className="kpi-value">{v ?? '…'}</div></div></div>)}</div>
       <div className="d-flex flex-wrap gap-3 align-items-center mb-3">
         <input className="form-control" style={{ maxWidth: 300 }} placeholder="Search customer…" aria-label="Search" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -85,11 +86,11 @@ export default function AdminDebts() {
       <ErrorNote message={error} />
       <div className="card">
         {loading && !data ? <TableSkeleton /> : data?.rows.length === 0 ? <EmptyState title="No debt records" text="Credit sales will appear here." /> : (
-          <div className="table-responsive"><table className="table mb-0 align-middle">
-            <thead><tr><th>Customer</th><th>Contact</th><th className="text-end">Total credit</th><th className="text-end">Payments</th><th className="text-end">Balance</th><th>Last purchase</th><th>Last payment</th><th>Status</th><th /></tr></thead>
+          <CardTable><table className="table mb-0 align-middle">
+            <thead><tr><th>Customer</th><th className="text-end">Balance</th><th>Status</th><th>Contact</th><th className="text-end">Total credit</th><th className="text-end">Payments</th><th>Last purchase</th><th>Last payment</th><th /></tr></thead>
             <tbody>{data?.rows.map((r: Json) => (
-              <tr key={r.customerId}><td className="fw-semibold">{r.name}</td><td><a href={telHref(r.phone)}>{r.phone}</a></td><td className="text-end money">{formatPeso(r.totalCharges)}</td><td className="text-end money">{formatPeso(r.totalPayments)}</td><td className="text-end money fw-semibold">{formatPeso(r.balance)}</td><td>{formatDate(r.lastPurchase)}</td><td>{formatDate(r.lastPayment)}</td><td><StatusBadge status={r.status} label={r.status === 'PAID' ? 'Paid' : r.status === 'PARTIAL' ? 'Partial' : 'Unpaid'} /></td><td><button className="btn btn-sm btn-outline-primary" onClick={() => setOpen(r.customerId)}>Ledger</button></td></tr>
-            ))}</tbody></table></div>
+              <tr key={r.customerId}><td className="fw-semibold">{r.name}</td><td className="text-end money fw-bold">{formatPeso(r.balance)}</td><td><StatusBadge status={r.status} label={r.status === 'PAID' ? 'Paid' : r.status === 'PARTIAL' ? 'Partially paid' : 'Unpaid'} /></td><td><a href={telHref(r.phone)}>{r.phone}</a></td><td className="text-end money">{formatPeso(r.totalCharges)}</td><td className="text-end money">{formatPeso(r.totalPayments)}</td><td>{formatDate(r.lastPurchase)}</td><td>{formatDate(r.lastPayment)}</td><td><button className="btn btn-sm btn-outline-primary" onClick={() => setOpen(r.customerId)}>Ledger</button></td></tr>
+            ))}</tbody></table></CardTable>
         )}
       </div>
       {open && <Ledger customerId={open} onClose={() => setOpen(null)} onChanged={reload} />}

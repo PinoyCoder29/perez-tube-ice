@@ -1,4 +1,12 @@
-export const TZ = 'Asia/Manila';
+export const TZ = process.env.NEXT_PUBLIC_BUSINESS_TIMEZONE || 'Asia/Manila';
+
+/** YYYY-MM-DD in the business timezone, `offsetDays` from today (client-safe; never uses the browser's local date). */
+export function businessDate(offsetDays = 0, tz = TZ): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const [y, m, d] = parts.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + offsetDays));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
 
 export function formatPeso(v: number | string | null | undefined): string {
   const n = Number(v ?? 0);

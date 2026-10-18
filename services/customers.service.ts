@@ -44,11 +44,17 @@ export async function listCustomers(opts: { q?: string | null; includeInactive?:
       : Promise.resolve([]),
   ]);
   const pm = new Map(purchases.map((p) => [p.customerId, p]));
+  const byType = ids.length ? await prisma.ledgerEntry.groupBy({ by: ['customerId', 'type'], where: { customerId: { in: ids } }, _sum: { amount: true } }) : [];
+  const sumOf = (cid: string, t: string) => byType.find((x) => x.customerId === cid && x.type === t)?._sum.amount ?? ZERO;
   return {
     total,
     rows: customers.map((c) => ({
       ...c,
       outstandingBalance: balances.get(c.id) ?? ZERO,
+      // Text status for the customer's account: Unpaid / Partially paid / Paid (null = never bought on credit)
+      accountStatus: ((balances.get(c.id) ?? ZERO).gt(0)
+        ? (sumOf(c.id, 'PAYMENT').lt(0) ? 'PARTIAL' : 'UNPAID')
+        : sumOf(c.id, 'CHARGE').gt(0) ? 'PAID' : null) as 'UNPAID' | 'PARTIAL' | 'PAID' | null,
       totalPurchases: pm.get(c.id)?._sum.totalAmount ?? ZERO,
       lastTransactionAt: pm.get(c.id)?._max.createdAt ?? null,
     })),

@@ -6,7 +6,8 @@ import { env } from '@/lib/env';
 import { HttpError } from '@/lib/errors';
 
 export const SESSION_COOKIE = 'perez_session';
-export const STAFF_USERNAME = 'staff';
+import { STAFF_USERNAME } from '@/lib/constants';
+export { STAFF_USERNAME };
 const SESSION_HOURS = 8;
 
 export interface SessionUser {

@@ -17,6 +17,6 @@ export const GET = route(async (req) => {
 export const POST = route(async (req) => {
   const actor = await getActor();
   const b = await parseJson(req, debtPaymentCreate);
-  const r = await recordDebtPayment(b, actor.id);
+  const r = await recordDebtPayment({ ...b, saleId: b.saleId ?? null }, actor.id);
   return { payment: r.payment, duplicate: r.duplicate, balance: r.balance };
 });

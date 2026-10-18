@@ -40,3 +40,8 @@ export const MOVEMENT_LABELS: Record<string, string> = {
   SALE: 'Sold',
   SALE_REVERSAL: 'Sale reversed',
 };
+export const STAFF_USERNAME = 'staff';
+/** Staff may look back this many days in the daily view (Admin has no limit). */
+export const STAFF_HISTORY_DAYS = 60;
+export const PAYMENT_STATUS_LABELS: Record<string, string> = { UNPAID: 'Unpaid', PARTIAL: 'Partially paid', PAID: 'Paid' };
+export const DEFAULT_CUSTOM_PRICE_MAX = 5000;

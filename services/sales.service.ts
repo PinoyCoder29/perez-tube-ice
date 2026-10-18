@@ -5,18 +5,29 @@ import { D, ZERO, sum, type Dec } from '@/lib/money';
 import { audit } from '@/lib/audit';
 import { fmtYmd, localYmd, resolveRange, type Period } from '@/lib/date';
 import { isUniqueViolation } from '@/lib/api';
+import { getSettings } from './settings.service';
 
 export interface SaleItemInput {
-  priceOptionId: string;
+  priceOptionId?: string;
+  /** Custom price lines: product + customUnitPrice (never touches the configured price buttons). */
+  productId?: string;
+  customUnitPrice?: string;
   quantity: number;
   /** Internal only (delivery quotes): honour the price agreed at scheduling time. */
   unitPriceOverride?: Dec;
+}
+export interface SalePaymentInput {
+  method: PaymentMethod;
+  amount: string;
+  reference?: string | null;
+  notes?: string | null;
+  idempotencyKey?: string | null;
 }
 export interface CreateSaleInput {
   idempotencyKey?: string | null;
   customerId?: string | null;
   items: SaleItemInput[];
-  payments: { method: PaymentMethod; amount: string }[];
+  payments: SalePaymentInput[];
   deliveryFee?: string | null;
   notes?: string | null;
 }
@@ -48,11 +59,14 @@ export function paymentStatusFor(total: Dec, paid: Dec): PaymentStatus {
  * Creates a sale, its payments, any credit charge and stock movements.
  * MUST run inside a transaction. Prices and totals are always recomputed here.
  */
-export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: string, opts: { allowInactive?: boolean } = {}) {
+export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: string, opts: { allowInactive?: boolean; allowCustom?: boolean } = {}) {
   const qtyById = new Map<string, { qty: number; override?: Dec }>();
+  const customItems: SaleItemInput[] = [];
   for (const it of input.items) {
-    const cur = qtyById.get(it.priceOptionId);
-    qtyById.set(it.priceOptionId, { qty: (cur?.qty ?? 0) + it.quantity, override: it.unitPriceOverride ?? cur?.override });
+    if (it.priceOptionId) {
+      const cur = qtyById.get(it.priceOptionId);
+      qtyById.set(it.priceOptionId, { qty: (cur?.qty ?? 0) + it.quantity, override: it.unitPriceOverride ?? cur?.override });
+    } else customItems.push(it);
   }
   const options = await tx.priceOption.findMany({ where: { id: { in: [...qtyById.keys()] } }, include: { product: true } });
   if (options.length !== qtyById.size) throw new HttpError(400, 'One or more items no longer exist. Refresh the page and try again.');
@@ -66,14 +80,38 @@ export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: stri
     const { qty, override } = qtyById.get(o.id)!;
     const unit = override ?? o.sellingPrice;
     return {
-      o,
+      productId: o.productId,
+      priceOptionId: o.id as string | null,
+      productName: o.product.name,
+      packageType: o.packageType,
+      label: o.label,
       qty,
       unit,
       lineTotal: unit.mul(qty),
       sacks: (o.sacksPerUnit ?? ZERO).mul(qty),
       invQty: o.product.inventoryTrackingEnabled && o.inventoryQuantityPerUnit ? o.inventoryQuantityPerUnit.mul(qty) : ZERO,
+      enforce: o.product.enforceStock,
+      isCustom: false,
     };
   });
+
+  if (customItems.length) {
+    if (!opts.allowCustom) throw new HttpError(403, 'Custom prices are not allowed for this user.');
+    const settings = await getSettings(tx);
+    const prods = await tx.product.findMany({ where: { id: { in: customItems.map((c) => c.productId!) } } });
+    for (const c of customItems) {
+      const p = prods.find((x) => x.id === c.productId);
+      if (!p || !p.active) throw new HttpError(400, 'Custom price: product not found or inactive.');
+      const price = D(c.customUnitPrice!);
+      if (price.lte(0)) throw new HttpError(400, 'Custom price must be greater than zero.');
+      if (price.gt(settings.customPriceMax)) throw new HttpError(400, `Custom price is above the allowed maximum of ${settings.customPriceMax}.`);
+      // Custom lines never consume stock or count as sacks: no conversion is ever guessed.
+      lines.push({
+        productId: p.id, priceOptionId: null, productName: p.name, packageType: 'CUSTOM', label: `Custom ₱${price.toFixed(2)}`,
+        qty: c.quantity, unit: price, lineTotal: price.mul(c.quantity), sacks: ZERO, invQty: ZERO, enforce: p.enforceStock, isCustom: true,
+      });
+    }
+  }
 
   const subtotal = sum(lines.map((l) => l.lineTotal));
   const deliveryFee = D(input.deliveryFee ?? 0);
@@ -105,16 +143,17 @@ export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: stri
       notes: input.notes ?? null,
       items: {
         create: lines.map((l) => ({
-          productId: l.o.productId,
-          priceOptionId: l.o.id,
-          productNameSnapshot: l.o.product.name,
-          packageTypeSnapshot: l.o.packageType,
-          labelSnapshot: l.o.label,
+          productId: l.productId,
+          priceOptionId: l.priceOptionId,
+          productNameSnapshot: l.productName,
+          packageTypeSnapshot: l.packageType,
+          labelSnapshot: l.label,
           unitPrice: l.unit,
           quantity: l.qty,
           lineTotal: l.lineTotal,
           sacks: l.sacks,
           inventoryQty: l.invQty,
+          isCustomPrice: l.isCustom,
         })),
       },
     },
@@ -130,6 +169,9 @@ export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: stri
         paymentMethod: p.method,
         paymentType: 'SALE_PAYMENT',
         receivedById: actorId,
+        reference: p.reference ?? null,
+        notes: p.notes ?? null,
+        idempotencyKey: p.idempotencyKey ?? null,
         allocations: { create: { saleId: sale.id, allocatedAmount: D(p.amount) } },
       },
     });
@@ -145,8 +187,8 @@ export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: stri
   const byProduct = new Map<string, { name: string; enforce: boolean; qty: Dec }>();
   for (const l of lines) {
     if (l.invQty.gt(0)) {
-      const cur = byProduct.get(l.o.productId);
-      byProduct.set(l.o.productId, { name: l.o.product.name, enforce: l.o.product.enforceStock, qty: (cur?.qty ?? ZERO).plus(l.invQty) });
+      const cur = byProduct.get(l.productId);
+      byProduct.set(l.productId, { name: l.productName, enforce: l.enforce, qty: (cur?.qty ?? ZERO).plus(l.invQty) });
     }
   }
   for (const [productId, v] of byProduct) {
@@ -165,7 +207,7 @@ export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: stri
   return tx.sale.findUniqueOrThrow({ where: { id: sale.id }, include: saleInclude });
 }
 
-export async function createSale(input: CreateSaleInput, actorId: string) {
+export async function createSale(input: CreateSaleInput, actorId: string, opts: { allowCustom?: boolean } = {}) {
   const key = input.idempotencyKey ?? null;
   try {
     return await prisma.$transaction(
@@ -174,7 +216,7 @@ export async function createSale(input: CreateSaleInput, actorId: string) {
           const ex = await tx.sale.findUnique({ where: { idempotencyKey: key }, include: saleInclude });
           if (ex) return { sale: ex, duplicate: true };
         }
-        return { sale: await createSaleTx(tx, input, actorId), duplicate: false };
+        return { sale: await createSaleTx(tx, input, actorId, { allowCustom: opts.allowCustom }), duplicate: false };
       },
       { timeout: 20000 },
     );
@@ -236,46 +278,59 @@ export async function listSales(f: SaleFilters) {
   return { total, page: f.page, pageSize: f.pageSize, rows };
 }
 
-/** Controlled reversal: nothing is deleted; payments, charges and stock are reversed with audit entries. */
+/**
+ * Controlled reversal: nothing is deleted; payments, credit charges and stock are reversed with new entries.
+ * With cascadeDebtPayments (used when a delivery order is cancelled/reversed) later payments applied only to this sale are voided too.
+ */
+export async function voidSaleTx(tx: Tx, id: string, reason: string, actorId: string, opts: { cascadeDebtPayments?: boolean } = {}) {
+  await tx.$queryRaw`SELECT id FROM "Sale" WHERE id = ${id} FOR UPDATE`;
+  const sale = await tx.sale.findUnique({ where: { id } });
+  if (!sale) throw new HttpError(404, 'Sale not found.');
+  if (sale.status === 'VOIDED') throw new HttpError(409, 'This sale is already voided.');
+  const now = new Date();
+
+  const debtPays = await tx.payment.findMany({
+    where: { paymentType: 'DEBT_PAYMENT', status: 'ACTIVE', allocations: { some: { saleId: id } } },
+    include: { allocations: true },
+  });
+  if (debtPays.length > 0) {
+    if (!opts.cascadeDebtPayments) throw new HttpError(409, 'Later debt payments were applied to this sale. Void those payments first.');
+    for (const p of debtPays) {
+      if (p.allocations.some((a) => a.saleId !== id)) throw new HttpError(409, `Payment ${p.paymentReference} was also applied to other sales. Void that payment first.`);
+      await tx.payment.update({ where: { id: p.id }, data: { status: 'VOIDED', voidReason: `Sale voided: ${reason}`, voidedAt: now } });
+      await tx.ledgerEntry.create({
+        data: { customerId: p.customerId!, type: 'REVERSAL', amount: p.amount, paymentId: p.id, saleId: id, note: `Void payment ${p.paymentReference} (sale ${sale.transactionNumber} voided)`, recordedById: actorId },
+      });
+      await audit(tx, { actorId, action: 'PAYMENT_VOID', entityType: 'Payment', entityId: p.id, previousValues: { status: 'ACTIVE' }, newValues: { status: 'VOIDED', reason, via: 'sale void' } });
+    }
+  }
+
+  await tx.payment.updateMany({
+    where: { saleId: id, paymentType: 'SALE_PAYMENT', status: 'ACTIVE' },
+    data: { status: 'VOIDED', voidReason: reason, voidedAt: now },
+  });
+
+  const charges = await tx.ledgerEntry.findMany({ where: { saleId: id, type: 'CHARGE' } });
+  for (const c of charges) {
+    await tx.ledgerEntry.create({
+      data: { customerId: c.customerId, type: 'REVERSAL', amount: c.amount.neg(), saleId: id, note: `Void ${sale.transactionNumber}: ${reason}`, recordedById: actorId },
+    });
+  }
+
+  const moves = await tx.inventoryMovement.findMany({ where: { referenceType: 'Sale', referenceId: id, movementType: 'SALE' } });
+  for (const m of moves) {
+    const back = m.quantity.neg();
+    await tx.product.update({ where: { id: m.productId }, data: { currentStock: { increment: back } } });
+    await tx.inventoryMovement.create({
+      data: { productId: m.productId, movementType: 'SALE_REVERSAL', quantity: back, reason: `Void ${sale.transactionNumber}`, referenceType: 'Sale', referenceId: id, recordedById: actorId },
+    });
+  }
+
+  const updated = await tx.sale.update({ where: { id }, data: { status: 'VOIDED', voidReason: reason, voidedAt: now, voidedById: actorId } });
+  await audit(tx, { actorId, action: 'SALE_VOID', entityType: 'Sale', entityId: id, previousValues: { status: sale.status }, newValues: { status: 'VOIDED', reason } });
+  return updated;
+}
+
 export async function voidSale(id: string, reason: string, actorId: string) {
-  return prisma.$transaction(
-    async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Sale" WHERE id = ${id} FOR UPDATE`;
-      const sale = await tx.sale.findUnique({ where: { id } });
-      if (!sale) throw new HttpError(404, 'Sale not found.');
-      if (sale.status === 'VOIDED') throw new HttpError(409, 'This sale is already voided.');
-
-      const debtPaid = await tx.paymentAllocation.count({
-        where: { saleId: id, payment: { paymentType: 'DEBT_PAYMENT', status: 'ACTIVE' } },
-      });
-      if (debtPaid > 0) throw new HttpError(409, 'Later debt payments were applied to this sale. Void those payments first.');
-
-      const now = new Date();
-      await tx.payment.updateMany({
-        where: { saleId: id, paymentType: 'SALE_PAYMENT', status: 'ACTIVE' },
-        data: { status: 'VOIDED', voidReason: reason, voidedAt: now },
-      });
-
-      const charges = await tx.ledgerEntry.findMany({ where: { saleId: id, type: 'CHARGE' } });
-      for (const c of charges) {
-        await tx.ledgerEntry.create({
-          data: { customerId: c.customerId, type: 'REVERSAL', amount: c.amount.neg(), saleId: id, note: `Void ${sale.transactionNumber}: ${reason}`, recordedById: actorId },
-        });
-      }
-
-      const moves = await tx.inventoryMovement.findMany({ where: { referenceType: 'Sale', referenceId: id, movementType: 'SALE' } });
-      for (const m of moves) {
-        const back = m.quantity.neg();
-        await tx.product.update({ where: { id: m.productId }, data: { currentStock: { increment: back } } });
-        await tx.inventoryMovement.create({
-          data: { productId: m.productId, movementType: 'SALE_REVERSAL', quantity: back, reason: `Void ${sale.transactionNumber}`, referenceType: 'Sale', referenceId: id, recordedById: actorId },
-        });
-      }
-
-      const updated = await tx.sale.update({ where: { id }, data: { status: 'VOIDED', voidReason: reason, voidedAt: now, voidedById: actorId } });
-      await audit(tx, { actorId, action: 'SALE_VOID', entityType: 'Sale', entityId: id, previousValues: { status: sale.status }, newValues: { status: 'VOIDED', reason } });
-      return updated;
-    },
-    { timeout: 20000 },
-  );
+  return prisma.$transaction((tx) => voidSaleTx(tx, id, reason, actorId), { timeout: 20000 });
 }

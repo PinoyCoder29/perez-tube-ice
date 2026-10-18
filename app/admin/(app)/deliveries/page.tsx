@@ -2,15 +2,14 @@
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { MapPin, Phone, Plus, Trash2 } from 'lucide-react';
-import { api, useFetch, qs, type Json } from '@/lib/client/api';
-import { formatDateTime, formatPeso } from '@/lib/formatting';
+import { api, useFetch, type Json } from '@/lib/client/api';
+import { formatPeso } from '@/lib/formatting';
 import { telHref } from '@/lib/phone';
-import { DELIVERY_STATUS_LABELS } from '@/lib/constants';
 import { Modal } from '@/components/ui/Modal';
 import { CustomerPicker } from '@/components/customers/CustomerPicker';
-import { DeliverDialog } from '@/components/deliveries/DeliverDialog';
-import { EmptyState, ErrorNote, Field, PageHeader, StatusBadge, TableSkeleton } from '@/components/ui/common';
-import { useAsk, useToast } from '@/components/ui/providers';
+import { DeliveryBoard } from '@/components/deliveries/DeliveryBoard';
+import { ErrorNote, ExportButtons, Field, PageHeader, TableSkeleton } from '@/components/ui/common';
+import { useToast } from '@/components/ui/providers';
 
 interface Item { priceOptionId: string; quantity: number }
 
@@ -77,48 +76,13 @@ function ScheduleForm({ initialCustomerId, onClose, onSaved }: { initialCustomer
 
 function Inner() {
   const sp = useSearchParams();
-  const [status, setStatus] = useState('');
   const [scheduling, setScheduling] = useState(!!sp.get('customerId'));
-  const [deliver, setDeliver] = useState<Json | null>(null);
-  const { data, loading, error, reload } = useFetch<Json[]>(`/api/deliveries${qs({ status })}`);
-  const ask = useAsk();
-  const toast = useToast();
-
-  async function act(d: Json, st: string, needReason = false) {
-    let reason: string | undefined;
-    if (needReason) {
-      const r = await ask({ title: `${DELIVERY_STATUS_LABELS[st]} — ${d.customer.name}`, reason: true, danger: true, confirmText: DELIVERY_STATUS_LABELS[st] });
-      if (!r.ok) return;
-      reason = r.reason;
-    }
-    try { await api(`/api/deliveries/${d.id}/status`, { body: { status: st, reason: reason ?? null } }); toast(`Delivery ${DELIVERY_STATUS_LABELS[st].toLowerCase()}`); reload(); } catch (e) { toast((e as Error).message, 'danger'); }
-  }
-
+  const [version, setVersion] = useState(0);
   return (
     <div>
-      <PageHeader title="Deliveries" actions={<button className="btn btn-primary" onClick={() => setScheduling(true)}><Plus size={16} aria-hidden /> Schedule delivery</button>} />
-      <select className="form-select mb-3" style={{ maxWidth: 240 }} aria-label="Status filter" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option>{Object.entries(DELIVERY_STATUS_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-      <ErrorNote message={error} />
-      <div className="card">
-        {loading && !data ? <TableSkeleton /> : data?.length === 0 ? <EmptyState title="No deliveries" text="Schedule one for a customer who needs ice delivered." /> : (
-          <div className="table-responsive"><table className="table mb-0 align-middle">
-            <thead><tr><th>Scheduled</th><th>Customer</th><th>Items</th><th className="text-end">To collect</th><th>Payment</th><th>Status</th><th>Sale</th><th /></tr></thead>
-            <tbody>{data?.map((d) => (
-              <tr key={d.id}><td>{formatDateTime(d.scheduledAt)}</td><td><div className="fw-semibold">{d.customer.name}</div><a className="small" href={telHref(d.customer.phone)}>{d.customer.phone}</a><div className="small text-muted-2">{d.addressSnapshot}</div></td>
-                <td>{d.items.map((i: Json) => `${i.quantity}× ${i.productNameSnapshot} ${i.labelSnapshot}`).join(', ')}</td>
-                <td className="text-end money">{formatPeso(d.amountToCollect)}</td><td>{d.paymentType === 'COD' ? 'On arrival' : 'Credit'}</td>
-                <td><StatusBadge status={d.status} label={DELIVERY_STATUS_LABELS[d.status]} />{d.statusReason && <div className="small text-muted-2">{d.statusReason}</div>}</td>
-                <td>{d.sale ? <a href={`/receipt/${d.sale.id}`} target="_blank" rel="noreferrer">{d.sale.transactionNumber}</a> : '—'}</td>
-                <td className="text-nowrap">
-                  {(d.status === 'PENDING' || d.status === 'FAILED') && <button className="btn btn-sm btn-primary me-1" onClick={() => act(d, 'ASSIGNED')}>Assign</button>}
-                  {(d.status === 'ASSIGNED' || d.status === 'OUT_FOR_DELIVERY') && <button className="btn btn-sm btn-success me-1" onClick={() => setDeliver(d)}>Delivered</button>}
-                  {d.status === 'ASSIGNED' && <button className="btn btn-sm btn-outline-primary me-1" onClick={() => act(d, 'OUT_FOR_DELIVERY')}>Out</button>}
-                  {['PENDING', 'ASSIGNED', 'OUT_FOR_DELIVERY', 'FAILED'].includes(d.status) && <button className="btn btn-sm btn-outline-danger" onClick={() => act(d, 'CANCELLED', true)}>Cancel</button>}
-                </td></tr>))}</tbody></table></div>
-        )}
-      </div>
-      {scheduling && <ScheduleForm initialCustomerId={sp.get('customerId')} onClose={() => setScheduling(false)} onSaved={() => { setScheduling(false); reload(); }} />}
-      {deliver && <DeliverDialog delivery={deliver} onClose={() => setDeliver(null)} onDone={() => { setDeliver(null); reload(); }} />}
+      <PageHeader title="Deliveries" actions={<><ExportButtons type="deliveries" params={{ period: 'month' }} label="Export month" /><button className="btn btn-primary" onClick={() => setScheduling(true)}><Plus size={16} aria-hidden /> Schedule delivery</button></>} />
+      <DeliveryBoard key={version} admin />
+      {scheduling && <ScheduleForm initialCustomerId={sp.get('customerId')} onClose={() => setScheduling(false)} onSaved={() => { setScheduling(false); setVersion((v) => v + 1); }} />}
     </div>
   );
 }

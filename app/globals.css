@@ -105,3 +105,38 @@ a { color: var(--navy-2); }
 .receipt { max-width: 340px; margin: 1rem auto; background: #fff; padding: 1.25rem; font-family: 'Courier New', monospace; font-size: 13px; color: #000; border: 1px dashed #999; }
 .receipt hr { border-top: 1px dashed #666; opacity: 1; }
 @media print { body { background: #fff; } .no-print { display: none !important; } .receipt { border: 0; margin: 0; max-width: 100%; } }
+
+/* ---------- Section 25: mobile-first additions ---------- */
+html, body { overflow-x: hidden; }
+.card, .modal-body, .list-group-item, td, th { min-width: 0; }
+td, .wrap-any { overflow-wrap: anywhere; }
+.admin-bottom { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid var(--line); display: none; z-index: 1030; padding-bottom: env(safe-area-inset-bottom); }
+.admin-bottom a, .admin-bottom button, .bottom-nav button { flex: 1; text-align: center; padding: .45rem .1rem; color: var(--muted); text-decoration: none; font-size: .68rem; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 54px; justify-content: center; background: none; border: 0; }
+.admin-bottom a.active, .bottom-nav button.active { color: var(--navy-2); font-weight: 700; background: var(--ice-soft); }
+@media (max-width: 991.98px) {
+  .admin-bottom { display: flex; }
+  .admin-main { padding-bottom: 5.5rem; }
+  .sidebar nav .primary-only { display: none; }
+}
+.drawer-staff { position: fixed; inset: 0 0 0 auto; width: min(82vw, 320px); background: var(--navy); color: #cfe0f1; z-index: 1045; padding: 1rem; display: flex; flex-direction: column; gap: .25rem; }
+.drawer-staff a, .drawer-staff button { color: #cfe0f1; text-decoration: none; padding: .8rem .8rem; border-radius: 10px; display: flex; gap: .7rem; align-items: center; background: none; border: 0; text-align: left; font-size: 1rem; }
+.drawer-staff a.active { background: var(--ice); color: var(--navy); font-weight: 600; }
+
+/* wide tables become labelled cards on phones */
+@media (max-width: 767.98px) {
+  .table-cards { overflow: visible; }
+  .table-cards table, .table-cards tbody, .table-cards tr, .table-cards td { display: block; width: 100%; }
+  .table-cards thead { display: none; }
+  .table-cards tr { border: 1px solid var(--line); border-radius: 12px; margin: .6rem; padding: .35rem .6rem; width: auto; background: #fff; }
+  .table-cards td { display: flex; justify-content: space-between; gap: 1rem; padding: .3rem 0 !important; border: 0; text-align: right !important; }
+  .table-cards td::before { content: attr(data-label); color: var(--muted); font-size: .72rem; font-weight: 600; text-align: left; flex: 0 0 38%; text-transform: uppercase; letter-spacing: .02em; padding-top: .15rem; }
+  .table-cards td:first-child { font-size: 1.02rem; }
+  .table-cards td:empty { display: none; }
+}
+.order-card { border-left: 5px solid var(--line); }
+.order-card.st-unpaid { border-left-color: var(--bad); } .order-card.st-partial { border-left-color: var(--warn); } .order-card.st-paid { border-left-color: var(--ok); } .order-card.st-cancelled { border-left-color: #9aa8b8; opacity: .85; }
+.tab-scroll { display: flex; gap: .4rem; overflow-x: auto; padding-bottom: .4rem; scrollbar-width: thin; }
+.tab-scroll .btn { white-space: nowrap; flex: 0 0 auto; }
+.sticky-confirm { position: sticky; bottom: 4.3rem; z-index: 5; }
+@media (min-width: 992px) { .sticky-confirm { position: static; } }
+.chip-count { display: inline-block; min-width: 1.4rem; padding: 0 .35rem; border-radius: 999px; background: rgba(0,0,0,.12); font-size: .72rem; margin-left: .3rem; }

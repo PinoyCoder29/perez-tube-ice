@@ -6,17 +6,17 @@ import { formatDate, formatPeso } from '@/lib/formatting';
 import { telHref } from '@/lib/phone';
 import { CustomerDetail } from '@/components/customers/CustomerDetail';
 import { EmptyState, ErrorNote, TableSkeleton } from '@/components/ui/common';
+import { PaymentOverview } from '@/components/customers/PaymentOverview';
 
 const FILTERS = [['', 'All outstanding'], ['today', "Today's credit"], ['week', "This week's credit"], ['month', "This month's credit"]];
 
-export default function StaffDebts() {
+function Debts() {
   const [q, setQ] = useState('');
   const [f, setF] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const { data, loading, error, reload } = useFetch<Json>(`/api/debts${qs({ q, period: f })}`);
   return (
     <div>
-      <h1 className="h5 fw-bold mb-3">Utang / customer debts</h1>
       <div className="d-flex flex-wrap gap-2 mb-3">
         <input className="form-control" style={{ maxWidth: 320 }} placeholder="Search customer…" aria-label="Search debts" value={q} onChange={(e) => setQ(e.target.value)} />
         <div className="btn-group">{FILTERS.map(([k, l]) => <button key={k} className={`btn btn-sm ${f === k ? 'btn-primary' : 'btn-outline-primary'}`} onClick={() => setF(k)}>{l}</button>)}</div>
@@ -40,6 +40,19 @@ export default function StaffDebts() {
         )}
       </div>
       {open && <CustomerDetail id={open} onClose={() => setOpen(null)} onChanged={reload} />}
+    </div>
+  );
+}
+
+export default function StaffDebts() {
+  const [tab, setTab] = useState<'debts' | 'overview'>('debts');
+  const [cust, setCust] = useState<string | null>(null);
+  return (
+    <div>
+      <h1 className="h5 fw-bold mb-3">Utang / Payments</h1>
+      <div className="btn-group mb-3" role="tablist"><button role="tab" aria-selected={tab === 'debts'} className={`btn btn-sm ${tab === 'debts' ? 'btn-primary' : 'btn-outline-primary'}`} onClick={() => setTab('debts')}>Customer debts</button><button role="tab" aria-selected={tab === 'overview'} className={`btn btn-sm ${tab === 'overview' ? 'btn-primary' : 'btn-outline-primary'}`} onClick={() => setTab('overview')}>Payment overview</button></div>
+      {tab === 'debts' ? <Debts /> : <PaymentOverview onOpenCustomer={setCust} />}
+      {cust && <CustomerDetail id={cust} onClose={() => setCust(null)} />}
     </div>
   );
 }

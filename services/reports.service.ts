@@ -3,9 +3,11 @@ import { HttpError } from '@/lib/errors';
 import { num } from '@/lib/money';
 import { formatQty } from '@/lib/formatting';
 import { groupKey, resolveRange, type Group, type Period } from '@/lib/date';
-import { PACKAGE_LABELS, PAYMENT_METHOD_LABELS, DELIVERY_STATUS_LABELS, MOVEMENT_LABELS } from '@/lib/constants';
+import { PACKAGE_LABELS, PAYMENT_METHOD_LABELS, DELIVERY_STATUS_LABELS, MOVEMENT_LABELS, PAYMENT_STATUS_LABELS } from '@/lib/constants';
 import { REPORT_TYPES } from './reports.meta';
 import { debtorTable } from './debts.service';
+import { listDeliveries, type DeliveryTab } from './deliveries.service';
+import { listCustomers } from './customers.service';
 import { listInventory } from './inventory.service';
 
 export interface Column {
@@ -13,8 +15,12 @@ export interface Column {
   label: string;
   type?: 'money' | 'number' | 'text' | 'datetime';
 }
+
 export interface ReportResult {
   title: string;
+  rangeLabel?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
   columns: Column[];
   rows: Record<string, string | number | null>[];
 }
@@ -24,13 +30,22 @@ export interface ReportParams {
   to?: string | null;
   group: Group;
   status?: string | null;
+  customerId?: string | null;
+  method?: string | null;
 }
 
 export { REPORT_TYPES };
 
 const money = (n: unknown) => Math.round(num(n as number) * 100) / 100;
 
+/** Runs a report with the same definitions/date boundaries as the dashboard and stamps the range on the result. */
 export async function runReport(type: string, p: ReportParams): Promise<ReportResult> {
+  const range = resolveRange(p.period, { from: p.from, to: p.to });
+  const r = await build(type, p);
+  return { ...r, rangeLabel: range.label, rangeStart: range.start.toISOString(), rangeEnd: new Date(range.end.getTime() - 1).toISOString() };
+}
+
+async function build(type: string, p: ReportParams): Promise<ReportResult> {
   const range = resolveRange(p.period, { from: p.from, to: p.to });
   const inRange = { gte: range.start, lt: range.end };
 
@@ -184,29 +199,106 @@ export async function runReport(type: string, p: ReportParams): Promise<ReportRe
         rows: [...m.entries()].sort(([, a], [, b]) => b.t - a.t).map(([k, v]) => ({ name: k, count: v.n, amount: money(v.t) })),
       };
     }
-    case 'deliveries':
-    case 'deliveries-customer': {
-      const where = { scheduledAt: inRange, ...(p.status && p.status in DELIVERY_STATUS_LABELS ? { status: p.status as never } : {}) };
-      const ds = await prisma.delivery.findMany({ where, include: { customer: { select: { name: true } }, items: true, sale: { select: { totalAmount: true, amountPaid: true } } }, orderBy: { scheduledAt: 'asc' } });
-      if (type === 'deliveries-customer') {
-        const m = new Map<string, { n: number; done: number; collected: number }>();
-        for (const d of ds) {
-          const v = m.get(d.customer.name) ?? { n: 0, done: 0, collected: 0 };
-          v.n++;
-          if (d.status === 'DELIVERED') v.done++;
-          v.collected += num(d.sale?.amountPaid);
-          m.set(d.customer.name, v);
-        }
-        return {
-          title: 'Deliveries by customer',
-          columns: [{ key: 'customer', label: 'Customer' }, { key: 'total', label: 'Deliveries', type: 'number' }, { key: 'delivered', label: 'Delivered', type: 'number' }, { key: 'collected', label: 'Amount collected', type: 'money' }],
-          rows: [...m.entries()].map(([k, v]) => ({ customer: k, total: v.n, delivered: v.done, collected: money(v.collected) })),
-        };
-      }
+    case 'deliveries': {
+      const tab = (['all', 'pending', 'out', 'delivered', 'unpaid', 'partial', 'paid', 'gcash', 'cancelled'].includes(p.status ?? '') ? p.status : 'all') as DeliveryTab;
+      const res = await listDeliveries({ tab, period: p.period, from: p.from, to: p.to });
       return {
         title: 'Deliveries',
-        columns: [{ key: 'date', label: 'Scheduled', type: 'datetime' }, { key: 'customer', label: 'Customer' }, { key: 'status', label: 'Status' }, { key: 'items', label: 'Items' }, { key: 'fee', label: 'Delivery fee', type: 'money' }, { key: 'collected', label: 'Amount collected', type: 'money' }],
-        rows: ds.map((d) => ({ date: d.scheduledAt.toISOString(), customer: d.customer.name, status: DELIVERY_STATUS_LABELS[d.status], items: d.items.map((i) => `${i.quantity}× ${i.productNameSnapshot} ${i.labelSnapshot}`).join('; '), fee: money(d.deliveryFee), collected: money(d.sale?.amountPaid) })),
+        columns: [
+          { key: 'ref', label: 'Order no.', type: 'text' }, { key: 'date', label: 'Scheduled', type: 'datetime' }, { key: 'customer', label: 'Customer' }, { key: 'phone', label: 'Phone', type: 'text' },
+          { key: 'address', label: 'Address' }, { key: 'status', label: 'Delivery status' }, { key: 'items', label: 'Items' }, { key: 'total', label: 'Order total', type: 'money' },
+          { key: 'paid', label: 'Paid', type: 'money' }, { key: 'due', label: 'Balance due', type: 'money' }, { key: 'payStatus', label: 'Payment status' }, { key: 'methods', label: 'Payment methods' },
+          { key: 'deliveredAt', label: 'Delivered at', type: 'datetime' }, { key: 'cancel', label: 'Cancellation reason' },
+        ],
+        rows: res.rows.map((d) => ({
+          ref: d.orderNumber, date: d.scheduledAt.toISOString(), customer: d.customer.name, phone: d.customer.phone, address: d.addressSnapshot,
+          status: DELIVERY_STATUS_LABELS[d.status], items: d.items.map((i) => `${i.quantity}× ${i.productNameSnapshot} ${i.labelSnapshot}`).join('; '),
+          total: money(d.orderTotal), paid: money(d.amountPaid), due: money(d.amountDue), payStatus: d.status === 'CANCELLED' ? '' : PAYMENT_STATUS_LABELS[d.paymentStatus],
+          methods: d.paymentMethods.map((m) => `${PAYMENT_METHOD_LABELS[m.method]} ${m.amount.toFixed(2)}`).join('; '), deliveredAt: d.deliveredAt?.toISOString() ?? null, cancel: d.cancelReason ?? '',
+        })),
+      };
+    }
+    case 'deliveries-customer': {
+      const res = await listDeliveries({ period: p.period, from: p.from, to: p.to });
+      const m = new Map<string, { n: number; done: number; collected: number }>();
+      for (const d of res.rows) {
+        const v = m.get(d.customer.name) ?? { n: 0, done: 0, collected: 0 };
+        v.n++;
+        if (d.status === 'DELIVERED') v.done++;
+        if (d.status !== 'CANCELLED') v.collected += num(d.amountPaid);
+        m.set(d.customer.name, v);
+      }
+      return {
+        title: 'Deliveries by customer',
+        columns: [{ key: 'customer', label: 'Customer' }, { key: 'total', label: 'Deliveries', type: 'number' }, { key: 'delivered', label: 'Delivered', type: 'number' }, { key: 'collected', label: 'Amount collected', type: 'money' }],
+        rows: [...m.entries()].map(([k, v]) => ({ customer: k, total: v.n, delivered: v.done, collected: money(v.collected) })),
+      };
+    }
+    case 'transactions':
+    case 'customer-transactions': {
+      if (type === 'customer-transactions' && !p.customerId) throw new HttpError(400, 'Choose a customer for this report.');
+      const sales = await prisma.sale.findMany({
+        where: {
+          createdAt: inRange,
+          ...(p.customerId ? { customerId: p.customerId } : {}),
+          ...(p.method ? { payments: { some: { paymentMethod: p.method as never, status: 'ACTIVE' } } } : {}),
+        },
+        include: { items: true, customer: { select: { name: true, phone: true } }, staff: { select: { name: true } }, payments: { select: { paymentMethod: true, status: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
+      return {
+        title: type === 'transactions' ? 'Sales / transaction history' : 'Customer transaction history',
+        columns: [
+          { key: 'date', label: 'Date & time', type: 'datetime' }, { key: 'txn', label: 'Transaction', type: 'text' }, { key: 'status', label: 'Status' }, { key: 'staff', label: 'Staff' },
+          { key: 'customer', label: 'Customer' }, { key: 'phone', label: 'Phone', type: 'text' }, { key: 'items', label: 'Products' }, { key: 'qty', label: 'Qty', type: 'number' },
+          { key: 'total', label: 'Total', type: 'money' }, { key: 'paid', label: 'Paid', type: 'money' }, { key: 'balance', label: 'Remaining', type: 'money' }, { key: 'methods', label: 'Method(s)' }, { key: 'payStatus', label: 'Payment status' },
+        ],
+        rows: sales.map((s) => ({
+          date: s.createdAt.toISOString(), txn: s.transactionNumber, status: s.status === 'VOIDED' ? 'Voided' : 'Completed', staff: s.staff.name, customer: s.customer?.name ?? 'Walk-in', phone: s.customer?.phone ?? '',
+          items: s.items.map((i) => `${i.quantity}× ${i.productNameSnapshot} ${i.labelSnapshot}`).join('; '), qty: s.items.reduce((a, i) => a + i.quantity, 0),
+          total: money(s.totalAmount), paid: money(s.amountPaid), balance: s.status === 'VOIDED' ? 0 : money(s.totalAmount.minus(s.amountPaid)),
+          methods: [...new Set(s.payments.filter((x) => x.status === 'ACTIVE').map((x) => PAYMENT_METHOD_LABELS[x.paymentMethod]))].join(', ') || 'Credit', payStatus: PAYMENT_STATUS_LABELS[s.paymentStatus],
+        })),
+      };
+    }
+    case 'payments-list': {
+      const pays = await prisma.payment.findMany({
+        where: { createdAt: inRange, ...(p.method ? { paymentMethod: p.method as never } : {}), ...(p.customerId ? { customerId: p.customerId } : {}) },
+        include: { customer: { select: { name: true } }, receivedBy: { select: { name: true } }, sale: { select: { transactionNumber: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
+      return {
+        title: 'Payments received',
+        columns: [{ key: 'date', label: 'Date & time', type: 'datetime' }, { key: 'ref', label: 'Reference', type: 'text' }, { key: 'type', label: 'Type' }, { key: 'sale', label: 'Sale', type: 'text' }, { key: 'customer', label: 'Customer' }, { key: 'method', label: 'Method' }, { key: 'extra', label: 'Payment ref / note', type: 'text' }, { key: 'amount', label: 'Amount', type: 'money' }, { key: 'status', label: 'Status' }, { key: 'by', label: 'Received by' }],
+        rows: pays.map((x) => ({ date: x.createdAt.toISOString(), ref: x.paymentReference, type: x.paymentType === 'DEBT_PAYMENT' ? 'Debt / order payment' : 'Paid with sale', sale: x.sale?.transactionNumber ?? '', customer: x.customer?.name ?? 'Walk-in', method: PAYMENT_METHOD_LABELS[x.paymentMethod], extra: x.reference ?? x.notes ?? '', amount: money(x.amount), status: x.status === 'VOIDED' ? 'Voided' : 'Confirmed', by: x.receivedBy.name })),
+      };
+    }
+    case 'expenses-list': {
+      const ex = await prisma.expense.findMany({ where: { incurredAt: inRange }, include: { staff: { select: { name: true } } }, orderBy: { incurredAt: 'asc' } });
+      return {
+        title: 'Expenses',
+        columns: [{ key: 'date', label: 'Date & time', type: 'datetime' }, { key: 'category', label: 'Category' }, { key: 'description', label: 'Description' }, { key: 'method', label: 'Paid with' }, { key: 'receipt', label: 'Receipt ref', type: 'text' }, { key: 'amount', label: 'Amount', type: 'money' }, { key: 'status', label: 'Status' }, { key: 'by', label: 'Recorded by' }],
+        rows: ex.map((e) => ({ date: e.incurredAt.toISOString(), category: e.category, description: e.description, method: PAYMENT_METHOD_LABELS[e.paymentMethod], receipt: e.receiptRef ?? '', amount: money(e.amount), status: e.status === 'VOIDED' ? `Voided (${e.voidReason ?? ''})` : 'Active', by: e.staff.name })),
+      };
+    }
+    case 'customers': {
+      const { rows } = await listCustomers({ includeInactive: true, take: 5000 });
+      return {
+        title: 'Customer directory',
+        columns: [{ key: 'name', label: 'Name' }, { key: 'phone', label: 'Phone', type: 'text' }, { key: 'address', label: 'Address' }, { key: 'landmark', label: 'Landmark' }, { key: 'status', label: 'Status' }, { key: 'purchases', label: 'Total purchases', type: 'money' }, { key: 'balance', label: 'Outstanding balance', type: 'money' }, { key: 'last', label: 'Last transaction', type: 'datetime' }, { key: 'created', label: 'Created', type: 'datetime' }],
+        rows: rows.map((c) => ({ name: c.name, phone: c.phone, address: c.address, landmark: c.landmark ?? '', status: c.active ? 'Active' : 'Inactive', purchases: money(c.totalPurchases), balance: money(c.outstandingBalance), last: c.lastTransactionAt?.toISOString() ?? null, created: c.createdAt.toISOString() })),
+      };
+    }
+    case 'debt-ledger': {
+      const entries = await prisma.ledgerEntry.findMany({
+        where: { createdAt: inRange, ...(p.customerId ? { customerId: p.customerId } : {}) },
+        include: { customer: { select: { name: true } }, recordedBy: { select: { name: true } }, sale: { select: { transactionNumber: true } }, payment: { select: { paymentReference: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
+      return {
+        title: 'Debt ledger',
+        columns: [{ key: 'date', label: 'Date & time', type: 'datetime' }, { key: 'customer', label: 'Customer' }, { key: 'type', label: 'Entry' }, { key: 'ref', label: 'Reference', type: 'text' }, { key: 'note', label: 'Note' }, { key: 'amount', label: 'Amount (+ owed / − paid)', type: 'money' }, { key: 'by', label: 'Recorded by' }],
+        rows: entries.map((e) => ({ date: e.createdAt.toISOString(), customer: e.customer.name, type: e.type.charAt(0) + e.type.slice(1).toLowerCase(), ref: e.sale?.transactionNumber ?? e.payment?.paymentReference ?? '', note: e.note ?? '', amount: money(e.amount), by: e.recordedBy.name })),
       };
     }
     case 'inventory-stock':

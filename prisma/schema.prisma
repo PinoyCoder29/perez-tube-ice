@@ -239,6 +239,7 @@ model SaleItem {
   lineTotal           Decimal      @db.Decimal(12, 2)
   sacks               Decimal      @default(0) @db.Decimal(12, 3)
   inventoryQty        Decimal      @default(0) @db.Decimal(12, 3)
+  isCustomPrice       Boolean      @default(false)
   sale                Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product             Product      @relation(fields: [productId], references: [id])
   priceOption         PriceOption? @relation(fields: [priceOptionId], references: [id])
@@ -259,6 +260,7 @@ model Payment {
   status           RecordStatus        @default(ACTIVE)
   receivedById     String
   notes            String?
+  reference        String? // e.g. GCash reference number
   voidReason       String?
   voidedAt         DateTime?
   createdAt        DateTime            @default(now())
@@ -272,6 +274,7 @@ model Payment {
   @@index([customerId])
   @@index([saleId])
   @@index([paymentType, status])
+  @@index([paymentMethod, createdAt])
 }
 
 model PaymentAllocation {
@@ -333,6 +336,7 @@ model Expense {
 
 model Delivery {
   id              String              @id @default(cuid())
+  orderNumber     String              @unique
   customerId      String
   assignedStaffId String?
   saleId          String?             @unique
@@ -347,6 +351,9 @@ model Delivery {
   paymentType     DeliveryPaymentType @default(COD)
   instructions    String?
   statusReason    String?
+  cancelReason    String?
+  cancelledAt     DateTime?
+  cancelledById   String?
   createdById     String
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
@@ -356,6 +363,7 @@ model Delivery {
   items           DeliveryItem[]
 
   @@index([status, scheduledAt])
+  @@index([scheduledAt])
   @@index([customerId])
 }
 

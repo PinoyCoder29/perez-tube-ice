@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { api, useFetch, qs, type Json } from '@/lib/client/api';
 import { formatDateTime, formatPeso } from '@/lib/formatting';
-import { EmptyState, ErrorNote, PageHeader, Pager, PeriodPicker, StatusBadge, TableSkeleton, periodReady, usePeriod } from '@/components/ui/common';
+import { CardTable, EmptyState, ErrorNote, ExportButtons, PageHeader, Pager, PeriodPicker, StatusBadge, TableSkeleton, periodReady, usePeriod } from '@/components/ui/common';
 import { PAYMENT_METHOD_LABELS } from '@/lib/constants';
 import { useAsk, useToast } from '@/components/ui/providers';
 
@@ -25,7 +25,8 @@ export default function AdminSales() {
 
   return (
     <div>
-      <PageHeader title="POS / Sales History" actions={<PeriodPicker value={p} onChange={(v) => { setP(v); setPage(1); }} />} />
+      <PageHeader title="POS / Sales History" actions={<><a className="btn btn-outline-primary btn-sm" href="/admin/daily">Daily calendar</a><ExportButtons type="transactions" params={{ period: p.period, from: p.from, to: p.to, method: f.method }} /></>} />
+      <div className="mb-3"><PeriodPicker value={p} onChange={(v) => { setP(v); setPage(1); }} /></div>
       <div className="row g-2 mb-3">
         <div className="col-6 col-md-3"><input className="form-control" placeholder="Search txn / customer" aria-label="Search" value={f.q} onChange={(e) => set('q', e.target.value)} /></div>
         <div className="col-6 col-md-2"><select className="form-select" aria-label="Product" value={f.productId} onChange={(e) => set('productId', e.target.value)}><option value="">All products</option>{products.data?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
@@ -37,13 +38,13 @@ export default function AdminSales() {
       <ErrorNote message={error} />
       <div className="card">
         {loading && !data ? <TableSkeleton /> : data?.rows.length === 0 ? <EmptyState title="No transactions match" /> : (
-          <div className="table-responsive">
+          <CardTable>
             <table className="table mb-0 align-middle">
-              <thead><tr><th>Date</th><th>Transaction</th><th>Staff</th><th>Customer</th><th>Items</th><th className="text-end">Total</th><th className="text-end">Paid</th><th className="text-end">Remaining</th><th>Method</th><th>Status</th><th /></tr></thead>
+              <thead><tr><th>Transaction</th><th>Date</th><th>Staff</th><th>Customer</th><th>Items</th><th className="text-end">Total</th><th className="text-end">Paid</th><th className="text-end">Remaining</th><th>Method</th><th>Status</th><th /></tr></thead>
               <tbody>
                 {data?.rows.map((s: Json) => (
                   <tr key={s.id} className={s.status === 'VOIDED' ? 'text-muted' : ''}>
-                    <td>{formatDateTime(s.createdAt)}</td><td>{s.transactionNumber}</td><td>{s.staff.name}</td><td>{s.customer?.name ?? 'Walk-in'}</td>
+                    <td>{s.transactionNumber}</td><td>{formatDateTime(s.createdAt)}</td><td>{s.staff.name}</td><td>{s.customer?.name ?? 'Walk-in'}</td>
                     <td style={{ minWidth: 200 }}>{s.items.map((i: Json) => `${i.quantity}× ${i.productNameSnapshot} ${i.labelSnapshot}`).join(', ')}</td>
                     <td className="text-end money">{formatPeso(s.totalAmount)}</td><td className="text-end money">{formatPeso(s.amountPaid)}</td>
                     <td className="text-end money">{s.status === 'VOIDED' ? '—' : formatPeso(Number(s.totalAmount) - Number(s.amountPaid))}</td>
@@ -54,7 +55,7 @@ export default function AdminSales() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </CardTable>
         )}
         {data && <Pager page={page} total={data.total} pageSize={25} onPage={setPage} />}
       </div>

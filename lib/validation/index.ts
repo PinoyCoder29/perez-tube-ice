@@ -37,10 +37,20 @@ export const paymentMethod = z.enum(METHODS);
 export const paymentLine = z.object({ method: paymentMethod, amount: positiveMoney });
 export const orderItem = z.object({ priceOptionId: z.string().min(1), quantity: z.number().int().min(1).max(1000) });
 
+/** Either a configured price button (priceOptionId) or a custom price for a product. */
+export const saleItemInput = z
+  .object({
+    priceOptionId: z.string().min(1).optional(),
+    productId: z.string().min(1).optional(),
+    customUnitPrice: positiveMoney.optional(),
+    quantity: z.number().int().min(1).max(1000),
+  })
+  .refine((v) => !!v.priceOptionId !== (!!v.productId && !!v.customUnitPrice), 'Each item needs a price button, or a product with a custom price.');
+
 export const saleCreate = z.object({
   idempotencyKey: z.string().min(8).max(100),
   customerId: z.string().min(1).nullable().optional(),
-  items: z.array(orderItem).min(1, 'Add at least one item').max(50),
+  items: z.array(saleItemInput).min(1, 'Add at least one item').max(50),
   payments: z.array(paymentLine).max(5).default([]),
   notes: optText(500),
 });
@@ -51,6 +61,8 @@ export const debtPaymentCreate = z.object({
   amount: positiveMoney,
   method: paymentMethod,
   notes: optText(500),
+  reference: optText(80),
+  saleId: z.string().min(1).nullable().optional(),
 });
 
 export const reasonBody = z.object({ reason: z.string().trim().min(3, 'Please give a reason').max(300) });
@@ -112,10 +124,21 @@ export const deliveryCreate = z.object({
 });
 export const deliveryUpdate = deliveryCreate.omit({ customerId: true }).partial();
 
+export const deliveryPaymentLine = z.object({ method: paymentMethod, amount: positiveMoney, reference: optText(80), notes: optText(300) });
+
 export const deliveryStatusBody = z.object({
   status: z.enum(['PENDING', 'ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED', 'CANCELLED']),
   reason: optText(300),
-  payments: z.array(paymentLine).max(5).optional(),
+  payments: z.array(deliveryPaymentLine).max(3).optional(),
+  idempotencyKey: z.string().min(8).max(100).optional(),
+});
+
+export const deliveryPaymentBody = z.object({
+  idempotencyKey: z.string().min(8).max(100),
+  method: paymentMethod,
+  amount: positiveMoney,
+  reference: optText(80),
+  notes: optText(300),
 });
 
 export const movementCreate = z.object({
@@ -144,4 +167,6 @@ export const settingsBody = z.object({
   businessAddress: text(200).optional(),
   businessPhone: text(40).optional(),
   receiptFooter: text(200).optional(),
+  customPriceMax: z.union([z.string(), z.number()]).transform(String).refine((v) => /^\d{1,7}(\.\d{1,2})?$/.test(v) && Number(v) > 0, 'Enter a valid maximum price').optional(),
+  allowStaffCustomPrice: z.union([z.boolean(), z.enum(['true', 'false'])]).transform((v) => String(v)).optional(),
 });

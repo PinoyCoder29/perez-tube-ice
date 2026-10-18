@@ -2,7 +2,7 @@ import { HttpError } from '@/lib/errors';
 
 export const DEFAULT_TZ = 'Asia/Manila';
 export function getTimezone(): string {
-  return process.env.BUSINESS_TIMEZONE || DEFAULT_TZ;
+  return process.env.BUSINESS_TIMEZONE || process.env.NEXT_PUBLIC_BUSINESS_TIMEZONE || DEFAULT_TZ;
 }
 
 export type Ymd = { y: number; m: number; d: number };
@@ -123,7 +123,7 @@ export function resolveRange(
       const days = diffDays(f, e);
       if (days < 1) throw new HttpError(400, 'The "from" date must be on or before the "to" date.');
       if (days > 800) throw new HttpError(400, 'Date range is too large (max about 2 years).');
-      return make('custom', f, e, days > 92 ? 'month' : 'day', `${fmtYmd(f)} to ${fmtYmd(t)}`, tz);
+      return make('custom', f, e, days === 1 ? 'hour' : days > 92 ? 'month' : 'day', days === 1 ? fmtYmd(f) : `${fmtYmd(f)} to ${fmtYmd(t)}`, tz);
     }
   }
 }
@@ -184,4 +184,15 @@ export function groupKey(date: Date, g: Group, tz = getTimezone()): string {
   if (g === 'month') return `${v.y}-${pad(v.m)}`;
   if (g === 'week') return fmtYmd(startOfWeek(v));
   return fmtYmd(v);
+}
+
+/** A Date whose UTC fields equal the wall-clock time in `tz` (for writing local times into Excel cells). */
+export function toLocalWallClock(date: Date, tz = getTimezone()): Date {
+  const p = parts(date, tz);
+  return new Date(Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second));
+}
+
+/** Today's date in the business timezone as YYYY-MM-DD. */
+export function todayYmd(now = new Date(), tz = getTimezone()): string {
+  return fmtYmd(localYmd(now, tz));
 }

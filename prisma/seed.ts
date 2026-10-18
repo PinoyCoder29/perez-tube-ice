@@ -1,32 +1,9 @@
 /* Safe to run repeatedly: only creates what is missing. Never resets passwords or overwrites data. */
 import { PrismaClient, PackageType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { SEED_PRODUCTS } from './seed-data';
 
 const prisma = new PrismaClient();
-
-const SEED_PRODUCTS: { name: string; description: string; sortOrder: number; prices: { label: string; price: string }[] }[] = [
-  {
-    name: 'Crushed Ice',
-    description: 'Crushed ice',
-    sortOrder: 1,
-    prices: [
-      { label: '₱5', price: '5.00' },
-      { label: '₱10', price: '10.00' },
-      { label: '₱20', price: '20.00' },
-    ],
-  },
-  {
-    name: 'Tube Ice',
-    description: 'Tube ice',
-    sortOrder: 2,
-    prices: [
-      { label: '₱25', price: '25.00' },
-      { label: '₱70', price: '70.00' },
-      { label: '₱140', price: '140.00' },
-      { label: '₱260', price: '260.00' },
-    ],
-  },
-];
 
 async function main() {
   const username = (process.env.ADMIN_USERNAME || 'admin').trim();
@@ -83,6 +60,8 @@ async function main() {
     businessAddress: '',
     businessPhone: '',
     receiptFooter: 'Thank you for your purchase!',
+    customPriceMax: '5000',
+    allowStaffCustomPrice: 'true',
   };
   for (const [key, value] of Object.entries(defaults)) {
     const s = await prisma.setting.findUnique({ where: { key } });

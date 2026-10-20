@@ -1,114 +1,149 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { CheckCircle2, Download, Share } from "lucide-react";
 
-interface BIPEvent extends Event {
+interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+  userChoice: Promise<{
+    outcome: "accepted" | "dismissed";
+    platform?: string;
+  }>;
 }
 
-/** Install action + honest, platform-specific instructions. It is a progressive web app, not a native app. */
-export function InstallApp({ compact }: { compact?: boolean }) {
-  const [evt, setEvt] = useState<BIPEvent | null>(null);
+export function InstallApp({ compact = false }: { compact?: boolean }) {
+  const [installEvent, setInstallEvent] =
+    useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
-  const [platform, setPlatform] = useState<
-    "ios-safari" | "ios-other" | "android" | "other"
-  >("other");
+  const [android, setAndroid] = useState(false);
+  const [iosSafari, setIosSafari] = useState(false);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
     const ua = navigator.userAgent;
-    const ios =
-      /iPad|iPhone|iPod/.test(ua) ||
+    setAndroid(/Android/i.test(ua));
+
+    const isIOS =
+      /iPhone|iPad|iPod/i.test(ua) ||
       (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    const safari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
-    setPlatform(
-      ios
-        ? safari
-          ? "ios-safari"
-          : "ios-other"
-        : /Android/.test(ua)
-          ? "android"
-          : "other",
-    );
-    const standalone =
-      window.matchMedia("(display-mode: standalone)").matches ||
-      (navigator as unknown as { standalone?: boolean }).standalone === true;
-    setInstalled(standalone);
-    const onPrompt = (e: Event) => {
-      e.preventDefault();
-      setEvt(e as BIPEvent);
+
+    const isSafari =
+      /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+
+    setIosSafari(isIOS && isSafari);
+
+    const checkInstalled = () => {
+      const standalone =
+        window.matchMedia("(display-mode: standalone)").matches ||
+        window.matchMedia("(display-mode: fullscreen)").matches ||
+        (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+      setInstalled(standalone);
     };
-    const onInstalled = () => {
+
+    const handlePrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallEvent(event as BeforeInstallPromptEvent);
+    };
+
+    const handleInstalled = () => {
       setInstalled(true);
-      setEvt(null);
+      setInstallEvent(null);
+      setMessage("Perez Ice was installed successfully.");
     };
-    window.addEventListener("beforeinstallprompt", onPrompt);
-    window.addEventListener("appinstalled", onInstalled);
+
+    checkInstalled();
+
+    window.addEventListener("beforeinstallprompt", handlePrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+
     return () => {
-      window.removeEventListener("beforeinstallprompt", onPrompt);
-      window.removeEventListener("appinstalled", onInstalled);
+      window.removeEventListener("beforeinstallprompt", handlePrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
     };
   }, []);
 
-  async function install() {
-    if (!evt) return;
-    await evt.prompt();
-    const r = await evt.userChoice.catch(() => null);
-    if (r?.outcome === "accepted") setInstalled(true);
-    setEvt(null);
+  async function handleInstall() {
+    if (!installEvent) {
+      setMessage(
+        "Install is not available yet. Open Perez Ice in Chrome and check the browser menu.",
+      );
+      return;
+    }
+
+    try {
+      await installEvent.prompt();
+      const choice = await installEvent.userChoice;
+
+      if (choice.outcome === "accepted") {
+        setMessage(
+          "Installation accepted. Check your home screen or app drawer.",
+        );
+      } else {
+        setMessage("Installation was cancelled.");
+      }
+    } catch {
+      setMessage("Installation failed. Please try again in Chrome.");
+    } finally {
+      setInstallEvent(null);
+    }
   }
 
-  const small = compact ? "small" : "";
-  if (installed)
+  if (installed) {
     return (
-      <div className={`d-flex align-items-center gap-2 ${small}`}>
-        <CheckCircle2 size={18} aria-hidden /> Installed — you are using the app
-        from your home screen.
+      <div className="d-flex align-items-center gap-2">
+        <CheckCircle2 size={18} aria-hidden="true" />
+        <span>Perez Ice is running in app mode.</span>
       </div>
     );
+  }
+
   return (
-    <div className={small}>
-      <div className="fw-semibold mb-1">Install Perez Ice on this device</div>
-      {evt ? (
-        <button className="btn btn-primary btn-sm" onClick={install}>
-          <Download size={14} aria-hidden /> Install app
+    <div className={compact ? "small" : ""}>
+      <div className="fw-semibold mb-2">Install Perez Ice</div>
+
+      {installEvent ? (
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={handleInstall}
+        >
+          <Download size={15} className="me-1" aria-hidden="true" />
+          Install app
         </button>
-      ) : platform === "ios-safari" ? (
-        <ol className="ps-3 mb-0">
-          <li>
-            Tap the <Share size={13} aria-hidden /> <strong>Share</strong>{" "}
-            button in Safari.
-          </li>
-          <li>
-            Choose <strong>Add to Home Screen</strong>, then{" "}
-            <strong>Add</strong>.
-          </li>
-        </ol>
-      ) : platform === "ios-other" ? (
+      ) : android ? (
         <div>
-          On iPhone, installing only works from <strong>Safari</strong>. Open
-          this page in Safari, tap <strong>Share</strong>, then{" "}
-          <strong>Add to Home Screen</strong>.
+          <p className="mb-2">
+            Open this website in Google Chrome. If Chrome supports installation,
+            use its menu to install Perez Ice.
+          </p>
+          <p className="mb-0 text-muted">
+            If the install option is missing, check the website manifest, icons,
+            HTTPS, and Chrome installability requirements.
+          </p>
         </div>
-      ) : platform === "android" ? (
-        <div>
-          Open the browser menu (⋮) and choose <strong>Install app</strong> or{" "}
-          <strong>Add to Home screen</strong>. (Your browser has not offered the
-          one-tap install yet — it appears once the site has been used for a
-          moment over HTTPS.)
-        </div>
+      ) : iosSafari ? (
+        <p className="mb-0">
+          Tap <Share size={14} aria-hidden="true" /> <strong>Share</strong>,
+          then <strong>Add to Home Screen</strong>.
+        </p>
       ) : (
-        <div>
-          On a computer, look for the install icon in the address bar of Chrome
-          or Edge. On a phone, open this site in your phone’s browser.
+        <p className="mb-0">
+          Open Perez Ice in a supported browser and look for its install option.
+        </p>
+      )}
+
+      {message && (
+        <div className="alert alert-info mt-2 mb-0" role="status">
+          {message}
         </div>
       )}
+
       {!compact && (
-        <div className="text-muted-2 mt-2">
-          This is a web app that installs to your home screen — not a Play Store
-          / App Store app. It uses the same live data and logins as the website
-          and needs an internet connection to record anything.
-        </div>
+        <p className="text-muted small mt-2 mb-0">
+          Perez Ice is a Progressive Web App, not an APK. It uses the same
+          website and requires an internet connection.
+        </p>
       )}
     </div>
   );

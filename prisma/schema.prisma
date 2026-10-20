@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -97,6 +98,7 @@ model User {
   ledgerEntries      LedgerEntry[]
   movements          InventoryMovement[]
   auditLogs          AuditLog[]
+  customerPriceEdits CustomerPrice[]
 }
 
 model Session {
@@ -156,6 +158,7 @@ model PriceOption {
   updatedAt                DateTime       @updatedAt
   product                  Product        @relation(fields: [productId], references: [id])
   history                  PriceHistory[]
+  customerPrices           CustomerPrice[]
   saleItems                SaleItem[]
   deliveryItems            DeliveryItem[]
 
@@ -188,6 +191,7 @@ model Customer {
   payments      Payment[]
   ledger        LedgerEntry[]
   deliveries    Delivery[]
+  prices        CustomerPrice[]
 
   @@index([name])
   @@index([phone])
@@ -240,6 +244,8 @@ model SaleItem {
   sacks               Decimal      @default(0) @db.Decimal(12, 3)
   inventoryQty        Decimal      @default(0) @db.Decimal(12, 3)
   isCustomPrice       Boolean      @default(false)
+  pricingSource       String       @default("STANDARD") // STANDARD | CUSTOMER | CUSTOM
+  customerPriceId     String?
   sale                Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product             Product      @relation(fields: [productId], references: [id])
   priceOption         PriceOption? @relation(fields: [priceOptionId], references: [id])
@@ -337,6 +343,9 @@ model Expense {
 model Delivery {
   id              String              @id @default(cuid())
   orderNumber     String              @unique
+  idempotencyKey  String?             @unique
+  customerNameSnapshot String
+  orderTotal      Decimal             @default(0) @db.Decimal(12, 2)
   customerId      String
   assignedStaffId String?
   saleId          String?             @unique
@@ -371,16 +380,19 @@ model DeliveryItem {
   id                  String      @id @default(cuid())
   deliveryId          String
   productId           String
-  priceOptionId       String
+  priceOptionId       String?
   productNameSnapshot String
   packageTypeSnapshot PackageType
   labelSnapshot       String
   unitPrice           Decimal     @db.Decimal(12, 2)
   quantity            Int
   lineTotal           Decimal     @db.Decimal(12, 2)
+  pricingSource       String      @default("STANDARD")
+  customerPriceId     String?
+  isCustomPrice       Boolean     @default(false)
   delivery            Delivery    @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
   product             Product     @relation(fields: [productId], references: [id])
-  priceOption         PriceOption @relation(fields: [priceOptionId], references: [id])
+  priceOption         PriceOption? @relation(fields: [priceOptionId], references: [id])
 
   @@index([deliveryId])
 }
@@ -426,4 +438,43 @@ model Setting {
 model Sequence {
   key   String @id
   value Int
+}
+
+// A price for ONE customer on ONE package (price option). Several rows with different minQuantity form quantity tiers.
+// Rows are deactivated, never deleted, so historical snapshots stay explainable.
+model CustomerPrice {
+  id            String                @id @default(cuid())
+  customerId    String
+  priceOptionId String
+  sellingPrice  Decimal               @db.Decimal(12, 2)
+  minQuantity   Int                   @default(1)
+  effectiveFrom DateTime              @default(now())
+  active        Boolean               @default(true)
+  createdById   String
+  updatedById   String
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  customer      Customer              @relation(fields: [customerId], references: [id])
+  priceOption   PriceOption           @relation(fields: [priceOptionId], references: [id])
+  updatedBy     User                  @relation(fields: [updatedById], references: [id])
+  history       CustomerPriceHistory[]
+
+  @@index([customerId, priceOptionId, active])
+  @@index([priceOptionId])
+}
+
+model CustomerPriceHistory {
+  id              String        @id @default(cuid())
+  customerPriceId String
+  oldPrice        Decimal?      @db.Decimal(12, 2)
+  newPrice        Decimal       @db.Decimal(12, 2)
+  oldActive       Boolean?
+  newActive       Boolean
+  oldMinQuantity  Int?
+  newMinQuantity  Int
+  changedById     String
+  createdAt       DateTime      @default(now())
+  customerPrice   CustomerPrice @relation(fields: [customerPriceId], references: [id])
+
+  @@index([customerPriceId])
 }

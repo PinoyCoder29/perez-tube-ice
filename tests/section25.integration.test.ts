@@ -26,7 +26,7 @@ d('delivery payments, cancellation, daily totals (database)', () => {
 
   const mkCustomer = (n: string) => prisma.customer.create({ data: { name: `T25 ${tag} ${n}`, phone: '09170000000', address: 'Test street' } });
   const mkDelivery = async (customerId: string, qty = 2, fee = '0') =>
-    createDelivery({ customerId, scheduledDate: today, items: [{ priceOptionId: optionId, quantity: qty }], deliveryFee: fee, paymentType: 'COD', assign: true }, staff.id);
+    (await createDelivery({ customerId, scheduledDate: today, items: [{ priceOptionId: optionId, quantity: qty }], deliveryFee: fee, paymentType: 'COD', assign: true, idempotencyKey: newKeyForTests() }, staff, { allowCustom: false })).delivery;
   const row = async (id: string) => (await listDeliveries({ tab: 'all', date: today })).rows.find((r) => r.id === id)!;
 
   beforeAll(async () => {

@@ -62,6 +62,16 @@ export default function Dashboard() {
           <Kpi key="j" icon={Truck} label="Pending deliveries" value={d && String(d.pendingDeliveries)} sub="Pending, assigned or out" />,
         ].map((k, i) => <div className="col-6 col-lg-4 col-xl-3" key={i}>{k}</div>)}
       </div>
+      {d && (
+        <div className="card mb-4"><div className="card-header d-flex justify-content-between align-items-center flex-wrap gap-2"><span>Delivery monitoring — {d.range.label}</span><a className="btn btn-sm btn-outline-primary" href="/admin/deliveries">Open deliveries</a></div>
+          <div className="card-body"><div className="row g-2 text-center">
+            {[['Orders', d.deliveries.orders], ['Completed', d.deliveries.delivered], ['Pending / out', (d.deliveries.counts.pending ?? 0) + (d.deliveries.counts.out ?? 0)], ['Cancelled', d.deliveries.counts.cancelled ?? 0], ['Unpaid (utang)', formatPeso(d.deliveries.unpaidAmount)], ['Partially paid balance', formatPeso(d.deliveries.partialAmount)], ['Paid', formatPeso(d.deliveries.paidAmount)], ['GCash collected', formatPeso(d.deliveries.gcashAmount)]].map(([l, v]) => (
+              <div className="col-6 col-md-3" key={l as string}><div className="small text-muted-2">{l}</div><div className="fw-bold money">{v}</div></div>
+            ))}
+          </div>
+          {d.deliveries.daily.length > 1 && <div className="small text-muted-2 mt-3">Daily: {d.deliveries.daily.map((x: Json) => `${x.date} — ${x.delivered}/${x.orders} delivered, ${formatPeso(x.value)}`).join(' · ')}</div>}
+          </div></div>
+      )}
       {s && <div className="small text-muted-2 mb-3">Operating result (sales − expenses): <strong className="money">{formatPeso(s.operatingResult)}</strong> — accrual basis: sales are counted when made, whether or not they are paid yet.</div>}
 
       <div className="row g-3">

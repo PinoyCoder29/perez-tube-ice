@@ -1,7 +1,7 @@
 import { route, parseJson, intParam } from '@/lib/api';
-import { customerCreate } from '@/lib/validation';
-import { getActor, getFullAdmin } from '@/lib/auth';
-import { createCustomer, listCustomers } from '@/services/customers.service';
+import { customerCreateWithPrices } from '@/lib/validation';
+import { getFullAdmin, requireAdmin } from '@/lib/auth';
+import { createCustomerWithPrices, listCustomers } from '@/services/customers.service';
 
 export const GET = route(async (req) => {
   const sp = req.nextUrl.searchParams;
@@ -16,7 +16,9 @@ export const GET = route(async (req) => {
   return admin ? res : { ...res, rows: res.rows.map((r) => ({ ...r, notes: null })) };
 });
 
+// Only Admin can create permanent customer records (with their prices). Staff pick from existing customers.
 export const POST = route(async (req) => {
-  const actor = await getActor();
-  return createCustomer(await parseJson(req, customerCreate), actor.id);
+  const admin = await requireAdmin();
+  const { prices, ...data } = await parseJson(req, customerCreateWithPrices);
+  return createCustomerWithPrices(data, prices, admin.id);
 });

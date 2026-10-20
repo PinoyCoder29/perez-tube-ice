@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db/prisma';
 import { num } from '@/lib/money';
 import { previousRange, resolveRange, type DateRange, type Period } from '@/lib/date';
 import { buildSeries, pct, productBreakdown, summarize, type RangeData } from './analytics';
+import { listDeliveries } from './deliveries.service';
 
 export async function loadRangeData(range: DateRange): Promise<RangeData> {
   const inRange = { gte: range.start, lt: range.end };
@@ -45,7 +46,7 @@ async function openingDebt(before: Date) {
 export async function getDashboard(period: Period, from?: string | null, to?: string | null) {
   const range = resolveRange(period, { from, to });
   const prev = previousRange(range);
-  const [cur, prv, curLedger, prvLedger, curOpen, prvOpen, outstanding, pending] = await Promise.all([
+  const [cur, prv, curLedger, prvLedger, curOpen, prvOpen, outstanding, pending, deliveryList] = await Promise.all([
     loadRangeData(range),
     loadRangeData(prev),
     ledgerInRange(range),
@@ -54,6 +55,7 @@ export async function getDashboard(period: Period, from?: string | null, to?: st
     openingDebt(prev.start),
     prisma.ledgerEntry.aggregate({ _sum: { amount: true } }),
     prisma.delivery.count({ where: { status: { in: ['PENDING', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } } }),
+    listDeliveries({ period, from, to }),
   ]);
 
   const summary = summarize(cur);
@@ -85,6 +87,20 @@ export async function getDashboard(period: Period, from?: string | null, to?: st
       : null,
     outstandingDebt: num(outstanding._sum.amount),
     pendingDeliveries: pending,
+    // Delivery monitoring (orders created by Staff, scheduled in the selected period)
+    deliveries: {
+      ...deliveryList.totals,
+      counts: deliveryList.counts,
+      daily: Object.values(
+        deliveryList.rows.reduce<Record<string, { date: string; orders: number; delivered: number; value: number }>>((acc, d) => {
+          const k = d.scheduledAt.toISOString().slice(0, 10);
+          const x = (acc[k] ??= { date: k, orders: 0, delivered: 0, value: 0 });
+          if (d.status !== 'CANCELLED') { x.orders += 1; x.value += Number(d.orderTotal); }
+          if (d.status === 'DELIVERED') x.delivered += 1;
+          return acc;
+        }, {}),
+      ).sort((a, b) => a.date.localeCompare(b.date)),
+    },
     crushedIce: sumOf('crushed ice'),
     tubeIce: sumOf('tube ice'),
     series,

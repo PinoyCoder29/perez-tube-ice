@@ -15,6 +15,7 @@ export const REPORT_TYPES = [
   { id: 'expenses-category', label: 'Expenses by category' },
   { id: 'expenses-staff', label: 'Expenses by staff member' },
   { id: 'customers', label: 'Customer directory' },
+  { id: 'customer-prices', label: 'Customer-specific prices' },
   { id: 'customer-transactions', label: 'Customer transaction history', customer: true },
   { id: 'debt-ledger', label: 'Debt ledger (all entries)' },
   { id: 'deliveries', label: 'Deliveries', status: true },

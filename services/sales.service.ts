@@ -6,6 +6,7 @@ import { audit } from '@/lib/audit';
 import { fmtYmd, localYmd, resolveRange, type Period } from '@/lib/date';
 import { isUniqueViolation } from '@/lib/api';
 import { getSettings } from './settings.service';
+import { resolveLinePrice } from './pricing.service';
 
 export interface SaleItemInput {
   priceOptionId?: string;
@@ -15,6 +16,8 @@ export interface SaleItemInput {
   quantity: number;
   /** Internal only (delivery quotes): honour the price agreed at scheduling time. */
   unitPriceOverride?: Dec;
+  pricingSource?: string;
+  customerPriceId?: string | null;
 }
 export interface SalePaymentInput {
   method: PaymentMethod;
@@ -60,24 +63,37 @@ export function paymentStatusFor(total: Dec, paid: Dec): PaymentStatus {
  * MUST run inside a transaction. Prices and totals are always recomputed here.
  */
 export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: string, opts: { allowInactive?: boolean; allowCustom?: boolean } = {}) {
-  const qtyById = new Map<string, { qty: number; override?: Dec }>();
+  const qtyById = new Map<string, { qty: number; override?: Dec; source?: string; cpId?: string | null }>();
   const customItems: SaleItemInput[] = [];
   for (const it of input.items) {
     if (it.priceOptionId) {
       const cur = qtyById.get(it.priceOptionId);
-      qtyById.set(it.priceOptionId, { qty: (cur?.qty ?? 0) + it.quantity, override: it.unitPriceOverride ?? cur?.override });
+      qtyById.set(it.priceOptionId, { qty: (cur?.qty ?? 0) + it.quantity, override: it.unitPriceOverride ?? cur?.override, source: it.pricingSource ?? cur?.source, cpId: it.customerPriceId ?? cur?.cpId });
     } else customItems.push(it);
   }
   const options = await tx.priceOption.findMany({ where: { id: { in: [...qtyById.keys()] } }, include: { product: true } });
   if (options.length !== qtyById.size) throw new HttpError(400, 'One or more items no longer exist. Refresh the page and try again.');
+  // Customer-specific pricing: for a registered customer, every package line is re-priced on the server
+  // (customer price with its quantity rule > standard price > rejected). Browser-sent prices are never used.
+  const customerPriced = new Set<string>();
+  if (input.customerId) {
+    for (const [optId, v] of qtyById) {
+      if (v.override) continue;
+      const r = await resolveLinePrice(tx, { customerId: input.customerId, priceOptionId: optId, quantity: v.qty });
+      v.override = r.unitPrice;
+      v.source = r.source;
+      v.cpId = r.customerPriceId;
+      customerPriced.add(optId);
+    }
+  }
   if (!opts.allowInactive) {
     for (const o of options) {
-      if (!o.active || !o.product.active) throw new HttpError(400, `"${o.product.name} ${o.label}" is no longer available. Refresh the POS.`);
+      if (!o.product.active || (!o.active && !customerPriced.has(o.id))) throw new HttpError(400, `"${o.product.name} ${o.label}" is no longer available. Refresh the POS.`);
     }
   }
 
   const lines = options.map((o) => {
-    const { qty, override } = qtyById.get(o.id)!;
+    const { qty, override, source, cpId } = qtyById.get(o.id)!;
     const unit = override ?? o.sellingPrice;
     return {
       productId: o.productId,
@@ -92,6 +108,8 @@ export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: stri
       invQty: o.product.inventoryTrackingEnabled && o.inventoryQuantityPerUnit ? o.inventoryQuantityPerUnit.mul(qty) : ZERO,
       enforce: o.product.enforceStock,
       isCustom: false,
+      pricingSource: source ?? 'STANDARD',
+      customerPriceId: cpId ?? null,
     };
   });
 
@@ -108,7 +126,7 @@ export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: stri
       // Custom lines never consume stock or count as sacks: no conversion is ever guessed.
       lines.push({
         productId: p.id, priceOptionId: null, productName: p.name, packageType: 'CUSTOM', label: `Custom ₱${price.toFixed(2)}`,
-        qty: c.quantity, unit: price, lineTotal: price.mul(c.quantity), sacks: ZERO, invQty: ZERO, enforce: p.enforceStock, isCustom: true,
+        qty: c.quantity, unit: price, lineTotal: price.mul(c.quantity), sacks: ZERO, invQty: ZERO, enforce: p.enforceStock, isCustom: true, pricingSource: 'CUSTOM', customerPriceId: null,
       });
     }
   }
@@ -154,6 +172,8 @@ export async function createSaleTx(tx: Tx, input: CreateSaleInput, actorId: stri
           sacks: l.sacks,
           inventoryQty: l.invQty,
           isCustomPrice: l.isCustom,
+          pricingSource: l.pricingSource,
+          customerPriceId: l.customerPriceId,
         })),
       },
     },

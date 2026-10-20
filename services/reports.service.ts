@@ -289,6 +289,18 @@ async function build(type: string, p: ReportParams): Promise<ReportResult> {
         rows: rows.map((c) => ({ name: c.name, phone: c.phone, address: c.address, landmark: c.landmark ?? '', status: c.active ? 'Active' : 'Inactive', purchases: money(c.totalPurchases), balance: money(c.outstandingBalance), last: c.lastTransactionAt?.toISOString() ?? null, created: c.createdAt.toISOString() })),
       };
     }
+    case 'customer-prices': {
+      const rows = await prisma.customerPrice.findMany({
+        where: { ...(p.customerId ? { customerId: p.customerId } : {}) },
+        include: { customer: { select: { name: true, phone: true } }, priceOption: { include: { product: { select: { name: true } } } }, updatedBy: { select: { name: true } } },
+        orderBy: [{ customer: { name: 'asc' } }, { priceOption: { productId: 'asc' } }, { minQuantity: 'asc' }],
+      });
+      return {
+        title: 'Customer-specific prices',
+        columns: [{ key: 'customer', label: 'Customer' }, { key: 'phone', label: 'Phone', type: 'text' }, { key: 'product', label: 'Product' }, { key: 'pkg', label: 'Package' }, { key: 'minQty', label: 'From quantity', type: 'number' }, { key: 'price', label: 'Customer price', type: 'money' }, { key: 'standard', label: 'Standard price', type: 'money' }, { key: 'effective', label: 'Effective from', type: 'datetime' }, { key: 'status', label: 'Status' }, { key: 'updated', label: 'Last updated', type: 'datetime' }, { key: 'by', label: 'Updated by' }],
+        rows: rows.map((r) => ({ customer: r.customer.name, phone: r.customer.phone, product: r.priceOption.product.name, pkg: r.priceOption.label, minQty: r.minQuantity, price: money(r.sellingPrice), standard: r.priceOption.active ? money(r.priceOption.sellingPrice) : null, effective: r.effectiveFrom.toISOString(), status: r.active ? 'Active' : 'Inactive', updated: r.updatedAt.toISOString(), by: r.updatedBy.name })),
+      };
+    }
     case 'debt-ledger': {
       const entries = await prisma.ledgerEntry.findMany({
         where: { createdAt: inRange, ...(p.customerId ? { customerId: p.customerId } : {}) },

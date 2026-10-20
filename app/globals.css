@@ -140,3 +140,11 @@ td, .wrap-any { overflow-wrap: anywhere; }
 .sticky-confirm { position: sticky; bottom: 4.3rem; z-index: 5; }
 @media (min-width: 992px) { .sticky-confirm { position: static; } }
 .chip-count { display: inline-block; min-width: 1.4rem; padding: 0 .35rem; border-radius: 999px; background: rgba(0,0,0,.12); font-size: .72rem; margin-left: .3rem; }
+
+/* ---------- Section 27: PWA / standalone ---------- */
+.offline-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 2100; background: #7a1f16; color: #fff; font-size: .8rem; padding: calc(.35rem + env(safe-area-inset-top)) .75rem .35rem; text-align: center; }
+.update-bar { position: fixed; left: .75rem; right: .75rem; bottom: calc(4.6rem + env(safe-area-inset-bottom)); z-index: 2050; background: var(--navy); color: #fff; border-radius: 12px; padding: .6rem .75rem; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; font-size: .85rem; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+.update-bar span { flex: 1 1 200px; }
+.staff-top { padding-top: env(safe-area-inset-top); }
+@media (max-width: 991.98px) { .admin-main { padding-top: calc(1rem + env(safe-area-inset-top)); } }
+@media (display-mode: standalone) { body { overscroll-behavior-y: contain; -webkit-tap-highlight-color: transparent; user-select: none; } input, textarea, select, td, .wrap-any { user-select: text; } }

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api, useFetch, type Json } from '@/lib/client/api';
 import { ErrorNote, Field, PageHeader } from '@/components/ui/common';
+import { InstallApp } from '@/components/pwa/InstallApp';
 import { useToast } from '@/components/ui/providers';
 
 export default function SettingsPage() {
@@ -29,6 +30,10 @@ export default function SettingsPage() {
         <Field label="Highest custom price allowed (₱)" hint="The server rejects anything above this, or zero / negative prices."><input className="form-control" inputMode="decimal" value={f.customPriceMax} onChange={(e) => setF({ ...f, customPriceMax: e.target.value })} /></Field>
         <div className="small text-muted-2 mb-3">Timezone: {data?.timezone ?? '…'} (set with the BUSINESS_TIMEZONE environment variable)</div>
         <button className="btn btn-primary" onClick={save} disabled={!f.businessName}>Save settings</button>
+      </div></div>
+      <div className="card mb-3"><div className="card-body">
+        <h2 className="h6">Install the app</h2>
+        <InstallApp />
       </div></div>
       <div className="card"><div className="card-body">
         <h2 className="h6">Security</h2>

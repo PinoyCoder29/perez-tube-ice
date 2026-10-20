@@ -75,6 +75,10 @@ export const customerCreate = z.object({
   notes: optText(1000),
 });
 export const customerUpdate = customerCreate.extend({ active: z.boolean().optional() });
+/** Admin-only: a new customer together with the prices (per package) offered to that customer. */
+export const customerCreateWithPrices = customerCreate.extend({
+  prices: z.array(z.object({ priceOptionId: z.string().min(1), sellingPrice: positiveMoney, minQuantity: z.number().int().min(1).max(1000).default(1) })).max(200).default([]),
+});
 
 export const productCreate = z.object({
   name: text(80).min(1),
@@ -113,16 +117,23 @@ export const expenseCreate = z.object({
 export const expenseUpdate = expenseCreate.partial();
 
 export const deliveryCreate = z.object({
+  idempotencyKey: z.string().min(8).max(100),
   customerId: z.string().min(1),
   scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a delivery date'),
   scheduledTime: z.union([z.string().regex(/^\d{2}:\d{2}$/), z.literal(''), z.null()]).optional(),
-  items: z.array(orderItem).min(1, 'Add at least one item').max(30),
+  items: z.array(saleItemInput).min(1, 'Add at least one item').max(30),
   deliveryFee: money.optional(),
   paymentType: z.enum(['COD', 'CREDIT']).default('COD'),
   instructions: optText(500),
+  deliveryAddress: optText(300),
   assign: z.boolean().optional(),
+  // Optional payment arrangement recorded with the order: Paid Cash / Paid GCash / Partial. Omit for Unpaid / Collect later.
+  payment: z
+    .object({ idempotencyKey: z.string().min(8).max(100), method: paymentMethod, amount: positiveMoney, reference: optText(80), notes: optText(300) })
+    .nullable()
+    .optional(),
 });
-export const deliveryUpdate = deliveryCreate.omit({ customerId: true }).partial();
+export const deliveryUpdate = deliveryCreate.omit({ customerId: true, idempotencyKey: true, payment: true }).partial();
 
 export const deliveryPaymentLine = z.object({ method: paymentMethod, amount: positiveMoney, reference: optText(80), notes: optText(300) });
 
@@ -170,3 +181,12 @@ export const settingsBody = z.object({
   customPriceMax: z.union([z.string(), z.number()]).transform(String).refine((v) => /^\d{1,7}(\.\d{1,2})?$/.test(v) && Number(v) > 0, 'Enter a valid maximum price').optional(),
   allowStaffCustomPrice: z.union([z.boolean(), z.enum(['true', 'false'])]).transform((v) => String(v)).optional(),
 });
+
+export const customerPriceCreate = z.object({
+  priceOptionId: z.string().min(1),
+  sellingPrice: positiveMoney,
+  minQuantity: z.number().int().min(1).max(1000).default(1),
+  effectiveFrom: z.string().datetime({ offset: true }).nullable().optional(),
+  active: z.boolean().optional(),
+});
+export const customerPriceUpdate = customerPriceCreate.omit({ priceOptionId: true }).partial();

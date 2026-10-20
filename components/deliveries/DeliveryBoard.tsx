@@ -96,7 +96,7 @@ export function DeliveryBoard({ admin, extraFilters, header }: { admin?: boolean
                     </div>
                     <div className="mt-2 wrap-any"><MapPin size={14} aria-hidden /> {d.addressSnapshot}</div>
                     <div className="small text-muted-2">{d.hasTime ? formatDateTime(d.scheduledAt) : `${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date(d.scheduledAt))} (any time)`}</div>
-                    <ul className="mt-2 mb-2 small ps-3">{d.items.map((i: Json) => <li key={i.id}>{i.quantity}× {i.productNameSnapshot} {i.labelSnapshot} — {formatPeso(i.lineTotal)}</li>)}</ul>
+                    <ul className="mt-2 mb-2 small ps-3">{d.items.map((i: Json) => <li key={i.id}>{i.quantity}× {i.productNameSnapshot} {i.labelSnapshot} @ {formatPeso(i.unitPrice)} = {formatPeso(i.lineTotal)}{i.pricingSource === 'CUSTOMER' ? ' · customer price' : i.pricingSource === 'CUSTOM' ? ' · custom price' : ''}</li>)}</ul>
                     {d.instructions && <div className="alert alert-info py-1 small mb-2">Note: {d.instructions}</div>}
                     {cancelled && <div className="small mb-2"><strong>Cancelled</strong>{d.cancelledAt ? ` ${formatDateTime(d.cancelledAt)}` : ''}{d.cancelledByName ? ` by ${d.cancelledByName}` : ''} — {d.cancelReason}</div>}
                     {d.status === 'DELIVERED' && <div className="small mb-2 text-muted-2">Delivered {formatDateTime(d.deliveredAt)}{d.deliveredByName ? ` · ${d.deliveredByName}` : ''}</div>}
@@ -109,7 +109,6 @@ export function DeliveryBoard({ admin, extraFilters, header }: { admin?: boolean
                     {d.paymentMethods.length > 0 && <div className="small text-muted-2">Paid via {d.paymentMethods.map((m: Json) => `${PAYMENT_METHOD_LABELS[m.method]} ${formatPeso(m.amount)}`).join(', ')}{d.references.length ? ` · ref ${d.references.join(', ')}` : ''}{d.lastPaymentAt ? ` · last ${formatDateTime(d.lastPaymentAt)}` : ''}</div>}
                     {!cancelled && (
                       <div className="d-flex flex-wrap gap-2 mt-3">
-                        {admin && (d.status === 'PENDING' || d.status === 'FAILED') && <button className="btn btn-primary" onClick={() => post(d, { status: 'ASSIGNED' }, 'Assigned to Staff')}>Assign to Staff</button>}
                         {['PENDING', 'ASSIGNED'].includes(d.status) && <button className="btn btn-outline-primary" onClick={() => post(d, { status: 'OUT_FOR_DELIVERY' }, 'Out for delivery')}>Out for delivery</button>}
                         {open && <button className="btn btn-success flex-grow-1" onClick={() => setDlg({ d, mode: 'deliver' })}>Mark as delivered</button>}
                         {Number(d.amountDue) > 0 && <button className="btn btn-outline-success" onClick={() => setDlg({ d, mode: 'pay' })}>Record payment</button>}

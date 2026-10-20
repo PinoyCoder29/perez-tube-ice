@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Phone, Plus, Truck, Pencil } from 'lucide-react';
+import { Phone, Plus, Pencil } from 'lucide-react';
 import { useFetch, type Json } from '@/lib/client/api';
 import { formatDate, formatPeso } from '@/lib/formatting';
 import { telHref } from '@/lib/phone';
@@ -20,11 +20,12 @@ export default function AdminCustomers() {
       <PageHeader title="Customers" actions={<><ExportButtons type="customers" params={{ period: 'month' }} label="Directory" /><button className="btn btn-primary" onClick={() => setForm({})}><Plus size={16} aria-hidden /> Add customer</button></>} />
       <CustomersDebtsTabs active="customers" />
       <input className="form-control mb-3" style={{ maxWidth: 380 }} placeholder="Search name, number, address…" aria-label="Search customers" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+      {data && <div className="small text-muted-2 mb-2" aria-live="polite">{data.total} customer{data.total === 1 ? '' : 's'}{q ? ' match your search' : ' in total'}</div>}
       <ErrorNote message={error} />
       <div className="card">
         {loading && !data ? <TableSkeleton /> : data?.rows.length === 0 ? <EmptyState title="No customers found" /> : (
           <CardTable><table className="table mb-0 align-middle">
-            <thead><tr><th>Name</th><th className="text-end">Balance</th><th>Payment</th><th>Contact</th><th>Address</th><th className="text-end">Total purchases</th><th>Last transaction</th><th /></tr></thead>
+            <thead><tr><th>Name</th><th className="text-end">Balance</th><th>Payment</th><th>Contact</th><th>Address</th><th className="text-end">Total purchases</th><th>Last transaction</th><th className="text-end">Completed deliveries</th><th>Last delivery</th><th /></tr></thead>
             <tbody>{data?.rows.map((c: Json) => (
               <tr key={c.id}>
                 <td><button className="btn btn-link p-0 fw-semibold text-start" onClick={() => setOpen(c.id)}>{c.name}</button> {!c.active && <StatusBadge status="CANCELLED" label="Inactive" />}</td>
@@ -33,12 +34,13 @@ export default function AdminCustomers() {
                 <td><a href={telHref(c.phone)}><Phone size={13} aria-hidden /> {c.phone}</a></td>
                 <td>{c.address}</td><td className="text-end money">{formatPeso(c.totalPurchases)}</td>
                 <td>{formatDate(c.lastTransactionAt)}</td>
+                <td className="text-end">{c.completedDeliveries}</td><td>{c.lastDeliveryAt ? formatDate(c.lastDeliveryAt) : 'No deliveries yet'}</td>
                 <td><button className="btn btn-sm btn-outline-primary" onClick={() => setForm({ initial: c })}><Pencil size={14} aria-hidden /> Edit</button></td>
               </tr>))}</tbody></table></CardTable>
         )}
         {data && <Pager page={page} total={data.total} pageSize={25} onPage={setPage} />}
       </div>
-      {open && <CustomerDetail id={open} onClose={() => setOpen(null)} onChanged={reload} extraActions={(c) => <a className="btn btn-outline-primary" href={`/admin/deliveries?customerId=${c.id}`}><Truck size={14} aria-hidden /> Schedule delivery</a>} />}
+      {open && <CustomerDetail admin id={open} onClose={() => setOpen(null)} onChanged={reload} />}
       {form && <CustomerForm admin initial={form.initial} onClose={() => setForm(null)} onSaved={() => { setForm(null); reload(); }} />}
     </div>
   );

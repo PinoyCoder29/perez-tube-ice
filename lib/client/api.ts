@@ -5,12 +5,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export type Json = any;
 
 export async function api<T = Json>(url: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
-  const res = await fetch(url, {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new Error('You are offline. Nothing was saved. Reconnect and try again.');
+  }
+  let res: Response;
+  try {
+    res = await fetch(url, {
     method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers: opts.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     cache: 'no-store',
-  });
+    });
+  } catch {
+    throw new Error('Could not reach the server, so this was NOT confirmed. Check your connection. Retrying a sale or payment is safe: duplicates are prevented.');
+  }
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401 && typeof location !== 'undefined' && location.pathname.startsWith('/admin') && location.pathname !== '/admin/login') {

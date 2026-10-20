@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Activity, BarChart3, Boxes, CalendarDays, CreditCard, FileText, KeyRound, LayoutDashboard, LogOut, Menu, MoreHorizontal, Package, Receipt, Settings, ShoppingCart, Snowflake, Truck, Users, Wallet } from 'lucide-react';
+import { Activity, BarChart3, Boxes, CalendarDays, CreditCard, FileText, KeyRound, LayoutDashboard, LogOut, MoreHorizontal, Package, Receipt, Settings, ShoppingCart, Snowflake, Truck, Users, Wallet } from 'lucide-react';
 import { api } from '@/lib/client/api';
 
 const NAV = [
@@ -44,10 +44,6 @@ export default function AdminShell({ userName, children }: { userName: string; c
 
   return (
     <>
-      <div className="admin-topbar">
-        <button className="btn btn-sm btn-outline-light" aria-label="Open menu" onClick={() => setOpen(true)}><Menu size={18} /></button>
-        <strong>PEREZ ICE</strong>
-      </div>
       {open && <div className="sidebar-scrim" onClick={() => setOpen(false)} />}
       <aside className={`sidebar ${open ? 'open' : ''}`} aria-label="Admin navigation">
         <div className="brand"><Snowflake size={22} style={{ color: 'var(--ice)' }} aria-hidden /> PEREZ ICE</div>
